@@ -1,0 +1,16 @@
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# File identification & analysis
+python-magic==0.4.27
+pefile==2024.8.26
+pyelftools==0.31
+yara-python==4.5.1
+oletools==0.60.2
+
+# Reputation / external intel
+httpx==0.28.1

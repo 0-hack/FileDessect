@@ -1,0 +1,27 @@
+services:
+  filedessect:
+    build: .
+    image: filedessect:latest
+    container_name: filedessect
+    ports:
+      - "8000:8000"
+    environment:
+      # Optional: set to enable live VirusTotal reputation lookups.
+      # Without a key, FileDessect still links to the VirusTotal report
+      # for every file by its SHA-256 hash.
+      VT_API_KEY: "${VT_API_KEY:-}"
+      MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-100}"
+    volumes:
+      # Persist uploaded samples / reports outside the container if desired.
+      - dessect_uploads:/app/uploads
+    # Hardening: the analyzer never executes uploaded samples, so the
+    # filesystem can stay read-only apart from the uploads scratch volume.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  dessect_uploads:

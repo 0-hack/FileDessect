@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FileDessect — File Dissection & Malware Triage</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🔬</span>
+      <div>
+        <h1>FileDessect</h1>
+        <p class="tagline">Upload a file. We dissect it, reverse it, and tell you if it's safe.</p>
+      </div>
+    </div>
+    <div id="capabilities" class="capabilities"></div>
+  </header>
+
+  <main>
+    <section id="dropzone" class="dropzone">
+      <input type="file" id="fileInput" hidden />
+      <div class="dz-inner">
+        <div class="dz-icon">⬆️</div>
+        <p class="dz-title">Drag &amp; drop a file here</p>
+        <p class="dz-sub">or <button id="browseBtn" class="link-btn">browse</button> to choose one</p>
+        <p class="dz-note">Executables, documents, scripts, archives, images — anything. Files are analysed statically and never executed.</p>
+      </div>
+    </section>
+
+    <section id="status" class="status hidden"></section>
+
+    <section id="report" class="report hidden"></section>
+  </main>
+
+  <footer>
+    <p>FileDessect runs entirely inside its container. Static analysis only — no sample is executed. Reputation links point to VirusTotal.</p>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
