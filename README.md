@@ -44,6 +44,20 @@ findings.
   faked compile timestamps.
 - **Linux ELF** (`pyelftools`): architecture, symbol-derived capabilities,
   stripped/static detection, RWX segments.
+- **macOS Mach-O** (stdlib parser, thin & universal/fat): linked dylibs, segment
+  permissions (RWX), code-signature presence and encrypted-region detection.
+
+### Source-code / script analysis
+- Reads the actual source of **Python, Windows batch, PowerShell, shell,
+  JavaScript, VBScript, HTML, PHP and AppleScript** files and flags dangerous
+  constructs — dynamic execution (`eval`/`exec`/`IEX`), download-and-run
+  droppers, obfuscation, LOLBINs (`certutil`, `mshta`, `bitsadmin`), reverse
+  shells, and Defender/SIP/Gatekeeper tampering — quoting the offending line.
+- Detects **macOS launchd persistence** in LaunchAgent/LaunchDaemon plists.
+
+### Readable strings
+- Extracts strings and **highlights only the human-readable ones** (filtering
+  out mangled symbols and binary noise) so meaningful text stands out.
 
 ### Hidden / embedded content
 - Detects executables, archives, scripts and PDFs **embedded inside** other

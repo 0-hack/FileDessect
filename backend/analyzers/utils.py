@@ -46,6 +46,41 @@ def extract_strings(data: bytes, min_len: int = 4, limit: int = 20000) -> list[s
     return results
 
 
+_WORD_RE = re.compile(r"[A-Za-z]{2,}")
+_PATHISH_RE = re.compile(r"[\\/][A-Za-z0-9._-]+[\\/]")
+
+
+def is_human_readable(s: str, min_len: int = 4) -> bool:
+    """Heuristic: does ``s`` look like meaningful human-readable text?
+
+    Filters out the random-looking byte sequences that dominate raw `strings`
+    output (mangled symbols, base64 fragments, binary noise) so the report can
+    highlight only strings a person would actually find informative.
+    """
+    s = s.strip()
+    if len(s) < min_len:
+        return False
+    letters = sum(c.isalpha() for c in s)
+    if letters == 0:
+        return False
+    alpha_ratio = letters / len(s)
+    # Low alphabetic ratio: only keep if it clearly looks like a path or URL.
+    if alpha_ratio < 0.45:
+        low = s.lower()
+        if _PATHISH_RE.search(s) or low.startswith(("http", "www.", "c:\\", "/usr", "/lib", "/tmp", "/users")):
+            return True
+        return False
+    if not any(c in "aeiouAEIOU" for c in s):
+        return False  # consonant-only soup
+    # Reject low-diversity repetition like "aaaaaa" or "======".
+    if len(set(s)) / len(s) < 0.3:
+        return False
+    words = _WORD_RE.findall(s)
+    longest = max((len(w) for w in words), default=0)
+    # Needs at least one real-ish word, or a multi-token phrase.
+    return longest >= 3 or " " in s
+
+
 def human_size(num: int) -> str:
     size = float(num)
     for unit in ("B", "KB", "MB", "GB", "TB"):

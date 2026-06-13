@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 
 from .base import Analyzer, AnalyzerResult, FileContext, Severity
-from .utils import extract_strings, shannon_entropy
+from .utils import extract_strings, is_human_readable, shannon_entropy
 
 _URL_RE = re.compile(r"\b(?:https?|ftp)://[^\s\"'<>\\]{4,200}", re.IGNORECASE)
 _IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
@@ -61,6 +61,14 @@ _SUSPICIOUS_KEYWORDS: dict[str, tuple[str, Severity]] = {
     # Ransomware-ish
     "vssadmin delete shadows": ("deleting shadow copies (ransomware)", Severity.HIGH),
     "bcdedit": ("tampering with boot configuration", Severity.MEDIUM),
+    # macOS-specific
+    "osascript": ("AppleScript execution", Severity.LOW),
+    "/Library/LaunchAgents": ("macOS LaunchAgent persistence", Severity.MEDIUM),
+    "/Library/LaunchDaemons": ("macOS LaunchDaemon persistence", Severity.MEDIUM),
+    "do shell script": ("AppleScript shell execution", Severity.MEDIUM),
+    "csrutil disable": ("disabling macOS System Integrity Protection", Severity.HIGH),
+    "security find-generic-password": ("reading the macOS keychain", Severity.HIGH),
+    "spctl --master-disable": ("disabling macOS Gatekeeper", Severity.HIGH),
     # Crypto wallets / clipboard
     "bitcoin": ("cryptocurrency reference", Severity.INFO),
 }
@@ -76,6 +84,17 @@ class ContentAnalyzer(Analyzer):
         overall_entropy = shannon_entropy(data)
         strings = extract_strings(data, min_len=5)
         blob = "\n".join(strings)
+
+        # Highlight only the strings a human would find meaningful (filtering out
+        # the random-looking noise that dominates raw `strings` output).
+        readable: list[str] = []
+        seen: set[str] = set()
+        for s in strings:
+            if is_human_readable(s) and s not in seen:
+                seen.add(s)
+                readable.append(s)
+                if len(readable) >= _MAX_IOC:
+                    break
 
         urls = sorted(set(_URL_RE.findall(blob)))[:_MAX_IOC]
         ips = sorted({ip for ip in _IP_RE.findall(blob) if _plausible_ip(ip)})[:_MAX_IOC]
@@ -97,6 +116,8 @@ class ContentAnalyzer(Analyzer):
         result.metadata = {
             "entropy": round(overall_entropy, 3),
             "string_count": len(strings),
+            "readable_string_count": len(readable),
+            "readable_strings": readable,
             "url_count": len(urls),
             "ip_count": len(ips),
             "domain_count": len(domains),

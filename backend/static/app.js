@@ -12,6 +12,8 @@ const CAP_LABELS = {
   file_type_detection: "File typing",
   pe_analysis: "PE / Windows RE",
   elf_analysis: "ELF / Linux RE",
+  macho_analysis: "macOS Mach-O",
+  script_analysis: "Scripts / code",
   yara_signatures: "YARA",
   office_macros: "Office macros",
   virustotal_live: "VirusTotal live",
@@ -238,6 +240,8 @@ function renderDetails(r) {
     if ((c.domains || []).length) sub.push(listBlock(`Domains (${c.domains.length})`, c.domains));
     if ((c.base64_blobs || []).length)
       sub.push(objTable(`Base64 blobs (${c.base64_blobs.length})`, c.base64_blobs, ["offset", "length", "preview"]));
+    if ((c.readable_strings || []).length)
+      sub.push(listBlock(`Human-readable strings (${c.readable_string_count})`, c.readable_strings, false));
     blocks.push(subpanel("Content & indicators", sub.join("")));
   }
 
@@ -287,6 +291,44 @@ function renderDetails(r) {
     blocks.push(subpanel("Linux ELF (reverse engineering)", sub.join("")));
   }
 
+  // macOS Mach-O
+  const mo = by.macho && by.macho.metadata;
+  if (mo && mo.is_macho) {
+    const sub = [
+      kvTable({
+        "File type": mo.filetype,
+        Architecture: mo.arch,
+        Bits: mo.bits,
+        Universal: fmtBool(mo.fat),
+        "Code signature": fmtBool(mo.code_signature),
+        Encrypted: fmtBool(mo.encrypted),
+        "Writable+executable segment": fmtBool(mo.rwx_segment),
+      }),
+    ];
+    if ((mo.dylibs || []).length)
+      sub.push(listBlock(`Linked libraries (${mo.dylib_count})`, mo.dylibs));
+    blocks.push(subpanel("macOS Mach-O (reverse engineering)", sub.join("")));
+  }
+
+  // Script / source code
+  const code = by.code && by.code.metadata;
+  if (code && code.language) {
+    const sub = [
+      kvTable({
+        Language: code.language,
+        Lines: code.line_count,
+        "launchd persistence": code.plist_persistence === undefined ? undefined : fmtBool(code.plist_persistence),
+      }),
+    ];
+    if ((code.indicators || []).length)
+      sub.push(
+        objTable(`Detected constructs (${code.indicators.length})`, code.indicators, [
+          "severity", "pattern", "why", "line",
+        ])
+      );
+    blocks.push(subpanel(`Source code analysis (${code.language})`, sub.join("")));
+  }
+
   // Office macros
   const off = by.office && by.office.metadata;
   if (off && off.has_macros) {
@@ -333,9 +375,9 @@ function kvTable(obj) {
   return `<table class="dtable kvt"><tbody>${rows}</tbody></table>`;
 }
 
-function listBlock(title, arr) {
+function listBlock(title, arr, open = true) {
   const items = arr.map((v) => `<li>${escapeHtml(v)}</li>`).join("");
-  return `<details class="evidence" open><summary>${escapeHtml(title)}</summary><ul class="datalist">${items}</ul></details>`;
+  return `<details class="evidence"${open ? " open" : ""}><summary>${escapeHtml(title)}</summary><ul class="datalist">${items}</ul></details>`;
 }
 
 function objTable(title, arr, cols) {
