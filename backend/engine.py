@@ -13,10 +13,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .analyzers.base import AnalyzerResult, FileContext, Finding, Severity, Verdict
+from .analyzers.code import ScriptAnalyzer
 from .analyzers.content import ContentAnalyzer
 from .analyzers.elf import ELFAnalyzer
 from .analyzers.embedded import EmbeddedAnalyzer
 from .analyzers.identity import IdentityAnalyzer
+from .analyzers.macho import MachOAnalyzer
 from .analyzers.office import OfficeAnalyzer
 from .analyzers.pe import PEAnalyzer
 from .analyzers.virustotal import VirusTotalAnalyzer
@@ -119,6 +121,8 @@ class Engine:
             EmbeddedAnalyzer(),
             PEAnalyzer(),
             ELFAnalyzer(),
+            MachOAnalyzer(),
+            ScriptAnalyzer(),
             OfficeAnalyzer(),
             YaraAnalyzer(),
             VirusTotalAnalyzer(),

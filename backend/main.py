@@ -47,6 +47,8 @@ def health() -> dict:
             "file_type_detection": _have("magic"),
             "pe_analysis": _have("pefile"),
             "elf_analysis": _have("elftools"),
+            "macho_analysis": True,
+            "script_analysis": True,
             "yara_signatures": _have("yara"),
             "office_macros": _have("oletools"),
             "virustotal_live": bool(settings.vt_api_key),

