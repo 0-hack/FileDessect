@@ -68,11 +68,15 @@ class ELFAnalyzer(Analyzer):
         # Imported / referenced symbols -> capabilities.
         capabilities: dict[str, Severity] = {}
         symbol_names: set[str] = set()
+        imported_symbols: set[str] = set()  # undefined => resolved from libraries
         for section in elf.iter_sections():
             if isinstance(section, SymbolTableSection):
                 for sym in section.iter_symbols():
-                    if sym.name:
-                        symbol_names.add(sym.name)
+                    if not sym.name:
+                        continue
+                    symbol_names.add(sym.name)
+                    if sym["st_shndx"] == "SHN_UNDEF":
+                        imported_symbols.add(sym.name)
         for name in symbol_names:
             cap = _CAPABILITY_MAP.get(name)
             if cap:
@@ -81,6 +85,8 @@ class ELFAnalyzer(Analyzer):
                     capabilities[label] = sev
 
         meta["symbol_count"] = len(symbol_names)
+        meta["imported_symbols"] = sorted(imported_symbols)
+        meta["symbols"] = sorted(symbol_names)
         meta["capabilities"] = [
             {"capability": c, "severity": s.label} for c, s in capabilities.items()
         ]
