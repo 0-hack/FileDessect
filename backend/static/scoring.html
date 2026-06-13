@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FileDessect — Risk Scoring Reference</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🔬</span>
+      <div>
+        <h1>Risk Scoring Reference</h1>
+        <p class="tagline">Exactly how FileDessect turns findings into a verdict.</p>
+      </div>
+    </div>
+    <a class="vt-link" href="/">← Back to analyzer</a>
+  </header>
+
+  <main id="content">
+    <p class="dz-note">Loading scoring model…</p>
+  </main>
+
+  <footer>
+    <p>This page is generated live from the same constants the analysis engine uses, so it can never drift from actual behaviour.</p>
+  </footer>
+
+  <script>
+    function esc(s) {
+      return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
+    }
+    async function load() {
+      const el = document.getElementById("content");
+      let m;
+      try {
+        m = await (await fetch("/api/scoring")).json();
+      } catch (e) {
+        el.innerHTML = '<div class="error-box">Could not load scoring model.</div>';
+        return;
+      }
+      const parts = [];
+
+      parts.push(`<div class="panel"><h3>How it works</h3><p class="finding-desc">${esc(m.how_it_works)}</p></div>`);
+
+      // Severity weights
+      const sevRows = m.severity_weights.map((s) => `
+        <tr>
+          <td><span class="sev-tag sev-${s.severity}">${s.severity}</span></td>
+          <td class="num">${s.weight}</td>
+          <td>${esc(s.description)}</td>
+        </tr>`).join("");
+      parts.push(`<div class="panel"><h3>Severity weights</h3>
+        <p class="finding-desc">Every finding has one of these severities. Its weight is added to the file's cumulative risk score.</p>
+        <table class="dtable"><thead><tr><th>Severity</th><th>Weight</th><th>Meaning</th></tr></thead><tbody>${sevRows}</tbody></table></div>`);
+
+      // Verdict thresholds
+      const vRows = m.verdict_thresholds.map((v) => `
+        <tr>
+          <td><span class="verdict-badge" style="font-size:0.75rem">${esc(v.verdict)}</span></td>
+          <td>${esc(v.range)}</td>
+          <td>${esc(v.meaning)}</td>
+        </tr>`).join("");
+      parts.push(`<div class="panel"><h3>Verdict thresholds</h3>
+        <p class="finding-desc">The total score maps to a verdict as follows.</p>
+        <table class="dtable"><thead><tr><th>Verdict</th><th>Score range</th><th>Meaning</th></tr></thead><tbody>${vRows}</tbody></table></div>`);
+
+      // Hard overrides
+      const oRows = m.hard_overrides.map((o) => `
+        <tr><td><code>${esc(o.finding_id)}</code></td><td>${esc(o.description)}</td></tr>`).join("");
+      parts.push(`<div class="panel"><h3>Hard overrides</h3>
+        <p class="finding-desc">These findings force a <strong>malicious</strong> verdict no matter what the numeric score is.</p>
+        <table class="dtable"><thead><tr><th>Finding</th><th>Why it overrides</th></tr></thead><tbody>${oRows}</tbody></table></div>`);
+
+      parts.push(`<div class="panel"><h3>Important caveat</h3><p class="finding-desc">${esc(m.caveat)}</p></div>`);
+
+      el.innerHTML = parts.join("");
+    }
+    load();
+  </script>
+</body>
+</html>

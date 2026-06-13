@@ -52,5 +52,36 @@ def test_suspicious_powershell_strings_escalate():
 def test_report_structure():
     report = analyze(b"abc", "a.txt")
     for key in ("verdict", "risk_score", "explanation", "summary", "findings",
-                "identity", "analyzers"):
+                "identity", "analyzers", "scoring"):
         assert key in report
+
+
+def test_scoring_breakdown_matches_findings():
+    # PE-looking content with several keyword hits to generate findings.
+    data = b"MZ" + b"\x00" * 64 + b"powershell -enc DownloadString Invoke-Expression"
+    report = analyze(data, "x.bin")
+    sc = report["scoring"]
+    # Breakdown has one row per finding and the weights sum to the risk score.
+    assert len(sc["breakdown"]) == len(report["findings"])
+    assert sum(b["weight"] for b in sc["breakdown"]) == report["risk_score"]
+    assert sc["reason"]
+    assert sc["thresholds"] == {"suspicious": 30, "malicious": 90}
+
+
+def test_scoring_model_is_self_consistent():
+    from backend.engine import scoring_model
+
+    model = scoring_model()
+    weights = {s["severity"]: s["weight"] for s in model["severity_weights"]}
+    assert weights == {"info": 0, "low": 10, "medium": 30, "high": 60, "critical": 100}
+    assert len(model["verdict_thresholds"]) == 3
+    assert model["hard_overrides"]
+
+
+def test_full_iocs_included():
+    data = b"visit http://evil.example.com/payload and http://c2.test/beacon now"
+    report = analyze(data, "ioc.txt")
+    content = next(a for a in report["analyzers"] if a["analyzer"] == "content")
+    urls = content["metadata"]["urls"]
+    assert any("evil.example.com" in u for u in urls)
+    assert content["metadata"]["url_count"] == len(urls)

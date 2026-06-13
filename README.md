@@ -21,6 +21,14 @@ findings.
 - Plain-English explanation citing the specific findings that drove the verdict.
 - Every finding has a severity, a category, a human description of *why it
   matters*, and structured evidence.
+- **Comprehensive report**: the UI's *Identified data* section lists the
+  **complete** set of extracted artefacts — every URL/IP/domain, every imported
+  DLL & function, all sections, capabilities, symbols, macro indicators and
+  YARA matches — not just a sample.
+- **Score breakdown & reference**: each report shows a per-finding contribution
+  table (how the score was reached), and a dedicated `/scoring` page documents
+  exactly how severities, thresholds and hard overrides produce a verdict
+  (served live from the engine's own constants via `/api/scoring`).
 
 ### File identification
 - MD5 / SHA-1 / SHA-256 hashing.
@@ -107,7 +115,9 @@ docker run --rm -p 8000:8000 -e VT_API_KEY="$VT_API_KEY" filedessect
 | Method | Path           | Description                                   |
 |--------|----------------|-----------------------------------------------|
 | `GET`  | `/`            | Web UI                                         |
+| `GET`  | `/scoring`     | Risk-scoring reference page                     |
 | `GET`  | `/api/health`  | Liveness + which optional capabilities are on  |
+| `GET`  | `/api/scoring` | The scoring/verdict model (weights, thresholds) |
 | `POST` | `/api/analyze` | `multipart/form-data` with `file`; returns JSON report |
 
 ```bash

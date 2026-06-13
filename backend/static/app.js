@@ -138,6 +138,10 @@ function renderReport(r) {
   }
   html.push("</div>");
 
+  // Full identified data + score breakdown
+  html.push(renderDetails(r));
+  html.push(renderScoring(r));
+
   // Raw report
   html.push(`
     <div class="raw">
@@ -172,6 +176,202 @@ function renderFinding(f) {
       ${evidence}
     </div>
   `;
+}
+
+// --- Score breakdown --------------------------------------------------------
+function renderScoring(r) {
+  const sc = r.scoring;
+  if (!sc) return "";
+  const rows = sc.breakdown
+    .map(
+      (b) => `
+      <tr>
+        <td><span class="sev-tag sev-${b.severity}">${b.severity}</span></td>
+        <td class="num">+${b.weight}</td>
+        <td>${escapeHtml(b.title)}</td>
+        <td class="muted">${escapeHtml(b.category)}</td>
+      </tr>`
+    )
+    .join("");
+  const body = rows ||
+    '<tr><td colspan="4" class="muted">No findings contributed to the score.</td></tr>';
+  return `
+    <div class="panel">
+      <h3>How this score was calculated</h3>
+      <p class="finding-desc">${escapeHtml(sc.reason)}</p>
+      <table class="dtable">
+        <thead><tr><th>Severity</th><th>Weight</th><th>Finding</th><th>Category</th></tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot><tr>
+          <td class="muted">Total</td>
+          <td class="num"><strong>${sc.score}</strong></td>
+          <td colspan="2" class="muted">Thresholds: suspicious ≥ ${sc.thresholds.suspicious}, malicious ≥ ${sc.thresholds.malicious}</td>
+        </tr></tfoot>
+      </table>
+      <a class="vt-link" href="/scoring" target="_blank" rel="noopener">↗ How scoring &amp; verdicts work — full reference</a>
+    </div>
+  `;
+}
+
+// --- Full identified-data rendering ----------------------------------------
+function renderDetails(r) {
+  const by = {};
+  for (const a of r.analyzers || []) by[a.analyzer] = a;
+  const blocks = [];
+
+  // Content & indicators
+  const c = by.content && by.content.metadata;
+  if (c) {
+    const sub = [];
+    sub.push(
+      kvTable({
+        "Entropy (0–8)": c.entropy,
+        "Printable strings": c.string_count,
+        "URLs": c.url_count,
+        "IP addresses": c.ip_count,
+        "Domains": c.domain_count,
+        "Base64 blobs": c.base64_blob_count,
+      })
+    );
+    if ((c.urls || []).length) sub.push(listBlock(`URLs (${c.urls.length})`, c.urls));
+    if ((c.ips || []).length) sub.push(listBlock(`IP addresses (${c.ips.length})`, c.ips));
+    if ((c.domains || []).length) sub.push(listBlock(`Domains (${c.domains.length})`, c.domains));
+    if ((c.base64_blobs || []).length)
+      sub.push(objTable(`Base64 blobs (${c.base64_blobs.length})`, c.base64_blobs, ["offset", "length", "preview"]));
+    blocks.push(subpanel("Content & indicators", sub.join("")));
+  }
+
+  // PE
+  const pe = by.pe && by.pe.metadata;
+  if (pe && Object.keys(pe).length) {
+    const sub = [];
+    sub.push(
+      kvTable({
+        Type: pe.type,
+        Architecture: pe.machine,
+        "Compile time": pe.compile_time,
+        "Digitally signed": fmtBool(pe.digitally_signed),
+        "TLS callbacks": fmtBool(pe.tls_callbacks),
+        "Imported functions": pe.import_count,
+      })
+    );
+    if ((pe.capabilities || []).length) sub.push(capTable(pe.capabilities));
+    if ((pe.sections || []).length)
+      sub.push(
+        objTable(`Sections (${pe.sections.length})`, pe.sections, [
+          "name", "virtual_size", "raw_size", "entropy", "writable", "executable",
+        ])
+      );
+    if (pe.imports) sub.push(importsBlock(pe.imports));
+    blocks.push(subpanel("Windows PE (reverse engineering)", sub.join("")));
+  }
+
+  // ELF
+  const elf = by.elf && by.elf.metadata;
+  if (elf && Object.keys(elf).length) {
+    const sub = [];
+    sub.push(
+      kvTable({
+        Type: elf.type,
+        Architecture: elf.arch,
+        Bits: elf.bits,
+        "Entry point": elf.entry_point,
+        Stripped: fmtBool(elf.stripped),
+        "Statically linked": fmtBool(elf.statically_linked),
+        "Total symbols": elf.symbol_count,
+      })
+    );
+    if ((elf.capabilities || []).length) sub.push(capTable(elf.capabilities));
+    if ((elf.imported_symbols || []).length)
+      sub.push(listBlock(`Imported symbols (${elf.imported_symbols.length})`, elf.imported_symbols));
+    blocks.push(subpanel("Linux ELF (reverse engineering)", sub.join("")));
+  }
+
+  // Office macros
+  const off = by.office && by.office.metadata;
+  if (off && off.has_macros) {
+    const sub = [kvTable({ "Has macros": "yes", "Macro indicators": off.macro_indicators })];
+    blocks.push(subpanel("Office document macros", sub.join("")));
+  }
+
+  // YARA
+  const y = by.yara && by.yara.metadata;
+  if (y && (y.matched_rules || []).length) {
+    blocks.push(subpanel("YARA matches", listBlock(`Matched rules (${y.matched_rules.length})`, y.matched_rules)));
+  }
+
+  // VirusTotal
+  const vt = by.virustotal && by.virustotal.metadata;
+  if (vt) {
+    const kv = { Queried: fmtBool(vt.queried), Known: vt.known === undefined ? "—" : fmtBool(vt.known) };
+    if (vt.stats) {
+      kv.Malicious = vt.stats.malicious;
+      kv.Suspicious = vt.stats.suspicious;
+      kv.Harmless = vt.stats.harmless;
+      kv.Undetected = vt.stats.undetected;
+    }
+    let block = kvTable(kv);
+    if ((vt.names || []).length) block += listBlock("Known filenames", vt.names);
+    if (vt.permalink) block += `<a class="vt-link" href="${vt.permalink}" target="_blank" rel="noopener">↗ Open VirusTotal report</a>`;
+    blocks.push(subpanel("VirusTotal reputation", block));
+  }
+
+  if (!blocks.length) return "";
+  return `<div class="findings"><h3>Identified data (full detail)</h3>${blocks.join("")}</div>`;
+}
+
+// --- Detail render helpers --------------------------------------------------
+function subpanel(title, inner) {
+  return `<details class="subpanel" open><summary>${escapeHtml(title)}</summary><div class="subpanel-body">${inner}</div></details>`;
+}
+
+function kvTable(obj) {
+  const rows = Object.entries(obj)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `<tr><td class="muted">${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`)
+    .join("");
+  return `<table class="dtable kvt"><tbody>${rows}</tbody></table>`;
+}
+
+function listBlock(title, arr) {
+  const items = arr.map((v) => `<li>${escapeHtml(v)}</li>`).join("");
+  return `<details class="evidence" open><summary>${escapeHtml(title)}</summary><ul class="datalist">${items}</ul></details>`;
+}
+
+function objTable(title, arr, cols) {
+  const head = cols.map((c) => `<th>${escapeHtml(c.replace(/_/g, " "))}</th>`).join("");
+  const rows = arr
+    .map((o) => `<tr>${cols.map((c) => `<td>${escapeHtml(fmtCell(o[c]))}</td>`).join("")}</tr>`)
+    .join("");
+  return `<details class="evidence" open><summary>${escapeHtml(title)}</summary><table class="dtable"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></details>`;
+}
+
+function capTable(caps) {
+  const rows = caps
+    .map((c) => `<tr><td><span class="sev-tag sev-${c.severity}">${c.severity}</span></td><td>${escapeHtml(c.capability)}</td></tr>`)
+    .join("");
+  return `<details class="evidence" open><summary>Capabilities (${caps.length})</summary><table class="dtable"><tbody>${rows}</tbody></table></details>`;
+}
+
+function importsBlock(imports) {
+  const dlls = Object.entries(imports);
+  if (!dlls.length) return "";
+  const inner = dlls
+    .map(([dll, fns]) => `<details class="evidence"><summary>${escapeHtml(dll)} (${fns.length})</summary><ul class="datalist">${fns.map((f) => `<li>${escapeHtml(f)}</li>`).join("")}</ul></details>`)
+    .join("");
+  return `<details class="evidence" open><summary>Imported functions by DLL (${dlls.length})</summary>${inner}</details>`;
+}
+
+function fmtBool(v) {
+  if (v === true) return "yes";
+  if (v === false) return "no";
+  return v;
+}
+function fmtCell(v) {
+  if (v === true) return "✓";
+  if (v === false) return "—";
+  if (v === undefined || v === null) return "";
+  return v;
 }
 
 function findVtLink(r) {

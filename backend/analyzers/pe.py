@@ -212,15 +212,23 @@ class PEAnalyzer(Analyzer):
         capabilities: dict[str, Severity] = {}
         import_count = 0
         imported_dlls = []
+        # Full DLL -> [function] map so the report lists every imported API.
+        imports_detail: dict[str, list[str]] = {}
         if hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
             for entry in pe.DIRECTORY_ENTRY_IMPORT:
                 dll = entry.dll.decode("latin-1", "ignore") if entry.dll else "?"
                 imported_dlls.append(dll)
+                funcs = imports_detail.setdefault(dll, [])
                 for imp in entry.imports:
-                    if not imp.name:
+                    if imp.name:
+                        fname = imp.name.decode("latin-1", "ignore")
+                    elif imp.ordinal is not None:
+                        # Functions imported by ordinal have no name.
+                        fname = f"Ordinal#{imp.ordinal}"
+                    else:
                         continue
                     import_count += 1
-                    fname = imp.name.decode("latin-1", "ignore")
+                    funcs.append(fname)
                     cap = _CAPABILITY_MAP.get(fname)
                     if cap:
                         label, sev = cap
@@ -229,6 +237,7 @@ class PEAnalyzer(Analyzer):
 
         meta["imported_dlls"] = imported_dlls
         meta["import_count"] = import_count
+        meta["imports"] = imports_detail
         meta["capabilities"] = [
             {"capability": c, "severity": s.label} for c, s in capabilities.items()
         ]

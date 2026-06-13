@@ -17,6 +17,12 @@ _DOMAIN_RE = re.compile(
     r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,18}\b", re.IGNORECASE
 )
 _BASE64_RE = re.compile(r"[A-Za-z0-9+/]{120,}={0,2}")
+# Same pattern over raw bytes, used to report the real file offset of each blob.
+_BASE64_BYTES_RE = re.compile(rb"[A-Za-z0-9+/]{120,}={0,2}")
+
+# Generous safety cap so a pathological file can't produce an unbounded report,
+# while still being "complete" for any realistic sample.
+_MAX_IOC = 2000
 
 # Keywords grouped by what they suggest. Presence alone is not damning, but
 # clusters of them raise suspicion and are surfaced as evidence.
@@ -71,21 +77,34 @@ class ContentAnalyzer(Analyzer):
         strings = extract_strings(data, min_len=5)
         blob = "\n".join(strings)
 
-        urls = sorted(set(_URL_RE.findall(blob)))[:100]
-        ips = sorted({ip for ip in _IP_RE.findall(blob) if _plausible_ip(ip)})[:100]
+        urls = sorted(set(_URL_RE.findall(blob)))[:_MAX_IOC]
+        ips = sorted({ip for ip in _IP_RE.findall(blob) if _plausible_ip(ip)})[:_MAX_IOC]
         # Domains excluding ones already covered by URLs to reduce noise.
         domains = sorted(
             {d for d in _DOMAIN_RE.findall(blob) if _interesting_domain(d)}
-        )[:100]
-        b64_blobs = [m for m in _BASE64_RE.findall(blob)][:20]
+        )[:_MAX_IOC]
+
+        # Inventory every large base64 blob with its real file offset and length.
+        b64_inventory = [
+            {
+                "offset": m.start(),
+                "length": len(m.group()),
+                "preview": m.group()[:64].decode("ascii", "ignore"),
+            }
+            for m in list(_BASE64_BYTES_RE.finditer(data))[:_MAX_IOC]
+        ]
 
         result.metadata = {
             "entropy": round(overall_entropy, 3),
             "string_count": len(strings),
+            "url_count": len(urls),
+            "ip_count": len(ips),
+            "domain_count": len(domains),
             "urls": urls,
             "ips": ips,
             "domains": domains,
-            "long_base64_blobs": len(b64_blobs),
+            "base64_blob_count": len(b64_inventory),
+            "base64_blobs": b64_inventory,
         }
 
         # --- Entropy-based packing detection -------------------------------
@@ -104,35 +123,39 @@ class ContentAnalyzer(Analyzer):
             )
 
         # --- Network indicators --------------------------------------------
-        if urls or ips:
+        if urls or ips or domains:
             result.add(
                 id="content.network_indicators",
                 title="Embedded network indicators",
                 description=(
-                    f"Found {len(urls)} URL(s) and {len(ips)} IP address(es) "
-                    "inside the file. These may be command-and-control servers or "
-                    "download locations. Review them and check their reputation."
+                    f"Found {len(urls)} URL(s), {len(ips)} IP address(es) and "
+                    f"{len(domains)} domain(s) inside the file. These may be "
+                    "command-and-control servers or download locations. The "
+                    "complete list is included as evidence; review them and check "
+                    "their reputation."
                 ),
                 severity=Severity.INFO if not ips else Severity.LOW,
                 category="content",
-                urls=urls[:25],
-                ips=ips[:25],
+                urls=urls,
+                ips=ips,
+                domains=domains,
             )
 
         # --- Large base64 blobs --------------------------------------------
-        if b64_blobs:
+        if b64_inventory:
             result.add(
                 id="content.embedded_base64",
                 title="Large base64-encoded blob(s) embedded",
                 description=(
-                    f"Detected {len(b64_blobs)} long base64 string(s). Encoded "
+                    f"Detected {len(b64_inventory)} long base64 string(s). Encoded "
                     "blobs are frequently used to smuggle a hidden second-stage "
-                    "payload past simple content inspection."
+                    "payload past simple content inspection. Each blob's file "
+                    "offset and length is listed as evidence."
                 ),
                 severity=Severity.LOW,
                 category="content",
-                count=len(b64_blobs),
-                sample=b64_blobs[0][:80] + "..." if b64_blobs else "",
+                count=len(b64_inventory),
+                blobs=b64_inventory,
             )
 
         # --- Suspicious keyword clustering ---------------------------------

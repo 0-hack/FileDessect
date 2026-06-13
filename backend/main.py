@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .config import get_settings
-from .engine import Engine
+from .engine import Engine, scoring_model
 
 settings = get_settings()
 engine = Engine()
@@ -83,9 +83,20 @@ async def analyze(file: UploadFile = File(...)) -> JSONResponse:
     return JSONResponse(report)
 
 
+@app.get("/api/scoring")
+def scoring() -> dict:
+    """The full scoring & verdict model used by the engine."""
+    return scoring_model()
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(_STATIC_DIR / "index.html")
+
+
+@app.get("/scoring")
+def scoring_page() -> FileResponse:
+    return FileResponse(_STATIC_DIR / "scoring.html")
 
 
 # Serve the rest of the static assets (style.css, app.js).

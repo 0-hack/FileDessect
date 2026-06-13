@@ -84,7 +84,7 @@ class OfficeAnalyzer(Analyzer):
             ),
             severity=max(max_sev, Severity.MEDIUM),
             category="document",
-            indicators=keywords[:40],
+            indicators=keywords,
         )
 
         # Auto-execution + suspicious behaviour together => strong signal.
