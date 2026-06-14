@@ -150,15 +150,28 @@ class DisassemblyAnalyzer(Analyzer):
             "signature_hits": sig_hits,
         }
 
-        self._emit_findings(result, category_counts, sig_hits, archkey)
+        runtime = ctx.metadata.get("runtime")
+        self._emit_findings(result, category_counts, sig_hits, archkey, runtime)
         self._rizin_enrich(ctx, result)
         return result
 
     # ------------------------------------------------------------------ #
-    def _emit_findings(self, result, cat_counts, sig_hits, archkey) -> None:
+    def _emit_findings(self, result, cat_counts, sig_hits, archkey, runtime=None) -> None:
+        # In Go/Rust binaries, byte-scan NOP runs and SP-writes are runtime stack
+        # management / padding, not shellcode — report them as INFO so they stay
+        # visible without inflating the score.
+        _downweight = runtime in ("go", "rust")
+
         # Byte-signature based findings (highest confidence).
         for key, count in sig_hits.items():
             _pat, title, sev, why = _BYTE_SIGS[key]
+            if _downweight and key == "nop_sled":
+                sev = Severity.INFO
+                why += (
+                    f" (Reported as informational: this is a {runtime} binary, "
+                    "where such runs are typically runtime padding rather than a "
+                    "shellcode sled.)"
+                )
             result.add(
                 id=f"disasm.{key}",
                 title=f"Assembly: {title} (x{count})",
@@ -229,15 +242,23 @@ class DisassemblyAnalyzer(Analyzer):
             )
 
         if cat_counts.get("stack-pivot"):
+            pivot_desc = (
+                "A stack-pivot instruction (e.g. moving a register into ESP/RSP) "
+                "was found. Stack pivots are a building block of ROP-based "
+                "exploitation and shellcode."
+            )
+            pivot_sev = Severity.LOW
+            if _downweight:
+                pivot_sev = Severity.INFO
+                pivot_desc += (
+                    f" (Informational: this is a {runtime} binary, whose runtime "
+                    "legitimately switches stacks at startup.)"
+                )
             result.add(
                 id="disasm.stack_pivot",
                 title="Assembly: stack pivot",
-                description=(
-                    "A stack-pivot instruction (e.g. moving a register into ESP/RSP) "
-                    "was found. Stack pivots are a building block of ROP-based "
-                    "exploitation and shellcode."
-                ),
-                severity=Severity.LOW,
+                description=pivot_desc,
+                severity=pivot_sev,
                 category="disassembly",
             )
 

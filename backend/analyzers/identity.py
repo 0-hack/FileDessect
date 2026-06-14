@@ -9,6 +9,7 @@ import hashlib
 from pathlib import Path
 
 from .base import Analyzer, AnalyzerResult, FileContext, Severity
+from .utils import detect_runtime
 
 try:  # python-magic is backed by libmagic; degrade gracefully if absent.
     import magic  # type: ignore
@@ -59,6 +60,11 @@ class IdentityAnalyzer(Analyzer):
 
         extension = Path(ctx.filename).suffix.lower()
 
+        # Detect statically-linked managed runtimes (Go/Rust). Their embedded
+        # runtime and large symbol/string tables otherwise trip heuristics in
+        # downstream analyzers, so we flag the toolchain for them to consult.
+        runtime = detect_runtime(data)
+
         # Share with downstream analyzers.
         ctx.metadata.update(
             {
@@ -67,6 +73,7 @@ class IdentityAnalyzer(Analyzer):
                 "magic": magic_type,
                 "extension": extension,
                 "file_kind": real_kind,
+                "runtime": runtime,
             }
         )
 
@@ -78,7 +85,23 @@ class IdentityAnalyzer(Analyzer):
             "magic": magic_type,
             "extension": extension or "(none)",
             "detected_kind": real_kind or "unknown",
+            "runtime": runtime,
         }
+
+        if runtime:
+            result.add(
+                id=f"identity.runtime.{runtime}",
+                title=f"Built with the {runtime.capitalize()} toolchain",
+                description=(
+                    f"This binary is a statically-linked {runtime.capitalize()} "
+                    "executable. Its runtime imports (e.g. memory-management APIs) "
+                    "and large embedded symbol/string tables are expected and are "
+                    "down-weighted to avoid false positives."
+                ),
+                severity=Severity.INFO,
+                category="identity",
+                runtime=runtime,
+            )
 
         # Extension / content-type mismatch — a classic masquerading trick.
         if signature is not None and extension and extension not in signature[2]:
