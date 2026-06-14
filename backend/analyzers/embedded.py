@@ -55,24 +55,47 @@ class EmbeddedAnalyzer(Analyzer):
                 continue
             idx = data.find(sig, 1)
             if idx > 0:
-                embedded.append({"type": label, "offset": idx, "severity": sev})
+                item = {"type": label, "offset": idx, "severity": sev, "validated": True}
+                # A 4-byte ZIP local-file-header signature alone is weak — it
+                # appears coincidentally in large binaries (notably Go/Rust). Only
+                # treat it as a real embedded archive if an End-of-Central-Directory
+                # record (PK\x05\x06) also exists after it.
+                if sig == b"PK\x03\x04" and data.find(b"PK\x05\x06", idx) == -1:
+                    item["severity"] = Severity.INFO
+                    item["validated"] = False
+                embedded.append(item)
 
         for item in embedded:
-            result.add(
-                id="embedded.foreign_signature",
-                title=f"Embedded {item['type']} found inside file",
-                description=(
+            if item["validated"]:
+                desc = (
                     f"A {item['type']} signature was found at byte offset "
                     f"{item['offset']}, embedded within a file that presents "
                     f"itself as '{kind or ctx.metadata.get('mime', 'unknown')}'. "
                     "Hidden executable or archive content like this is not visible "
                     "to a normal user and is a strong indicator of a dropper or "
                     "polyglot payload."
+                )
+            else:
+                desc = (
+                    f"A {item['type']} signature byte sequence appears at offset "
+                    f"{item['offset']}, but no valid archive structure (End-of-"
+                    "Central-Directory) was found — this is most likely a "
+                    "coincidental byte match in binary data rather than a real "
+                    "embedded archive. Reported for completeness only."
+                )
+            result.add(
+                id="embedded.foreign_signature",
+                title=(
+                    f"Embedded {item['type']} found inside file"
+                    if item["validated"]
+                    else f"Unvalidated {item['type']} signature (likely coincidental)"
                 ),
+                description=desc,
                 severity=item["severity"],
                 category="embedded",
                 embedded_type=item["type"],
                 offset=item["offset"],
+                validated=item["validated"],
             )
 
         # --- Trailing / appended data after a format's logical end ---------

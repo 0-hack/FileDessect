@@ -196,6 +196,7 @@ class Engine:
                 "magic": ident.get("magic"),
                 "extension": ident.get("extension"),
                 "detected_kind": ident.get("file_kind"),
+                "runtime": ident.get("runtime"),
             },
             "verdict": verdict.value,
             "risk_score": score,

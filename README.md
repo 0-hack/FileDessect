@@ -35,6 +35,22 @@ findings.
 - True file-type detection via libmagic (independent of the extension).
 - **Masquerading detection**: extension/content mismatches and deceptive double
   extensions (e.g. `invoice.pdf.exe`).
+- **Toolchain/runtime detection** (Go, Rust): statically-linked binaries embed
+  their runtime and huge symbol/string tables that trip naive heuristics.
+  FileDessect detects them and down-weights the resulting noise (runtime
+  memory-management APIs, NOP-sled/stack-pivot byte hits) to avoid false
+  positives.
+
+### False-positive reduction
+- **TLD-validated domains**: extracted domains must end in a real top-level
+  domain (full ccTLD set + common gTLDs), so code symbols like
+  `reflect.Value.CanInterface` are no longer mistaken for hostnames.
+- **Base64 verification**: long alphanumeric runs are only reported as base64
+  when they actually look encoded (character entropy / specials), not when they
+  are densely-packed word or symbol tables.
+- **Validated embedded archives**: a ZIP is only treated as a real embedded
+  archive when an End-of-Central-Directory record is present; a lone 4-byte
+  signature match is reported as informational (likely coincidental).
 
 ### Reverse engineering of compiled executables
 - **Windows PE** (`pefile`): imported APIs translated into human capabilities

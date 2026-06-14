@@ -191,6 +191,69 @@ def test_disassembly_flags_peb_shellcode():
     assert _BYTE_SIGS["nop_sled"][0].search(shellcode)
 
 
+def test_detect_runtime():
+    from backend.analyzers.utils import detect_runtime
+
+    assert detect_runtime(b"....Go buildinf: blah runtime.morestack....") == "go"
+    assert detect_runtime(b"panic at /rustc/abc/library/std/src/...") == "rust"
+    assert detect_runtime(b"just some plain text") is None
+
+
+def test_tld_allowlist_filters_symbol_noise():
+    from backend.analyzers.utils import is_valid_domain
+
+    assert is_valid_domain("evil-c2.com")
+    assert is_valid_domain("example.co.uk")
+    assert is_valid_domain("payload.xyz")
+    # Go/Rust symbol soup that the old regex wrongly treated as domains:
+    assert not is_valid_domain("reflect.Value.CanInterface")
+    assert not is_valid_domain("uuid.FromString")
+    assert not is_valid_domain("0d.nx")
+
+
+def test_base64_heuristic_rejects_word_tables():
+    import base64 as _b64
+    from backend.analyzers.utils import looks_like_base64
+
+    real = _b64.b64encode(bytes(range(256)) * 2).decode()
+    assert looks_like_base64(real)
+    # A Go runtime string-table fragment (dictionary words, no +//=):
+    assert not looks_like_base64("ddebugdefererrorfaintfalsefaultfuzzygFreegcinggreengscanhchanhtt")
+
+
+def test_go_binary_suppresses_false_positives():
+    # Synthesised Go-ish content: runtime markers + benign runtime APIs + a
+    # symbol that looks domain-shaped + a word-table base64 lookalike.
+    data = (
+        b"Go buildinf: x runtime.morestack runtime.gopanic\n"
+        b"VirtualAlloc VirtualProtect\n"
+        b"reflect.Value.CanInterface uuid.FromString\n"
+        b"ddebugdefererrorfaintfalsefaultfuzzygFreegcinggreengscanhchanhttp\n"
+    )
+    report = analyze(data, "pcqf.bin")
+    assert report["identity"]["runtime"] == "go"
+    content = next(a for a in report["analyzers"] if a["analyzer"] == "content")["metadata"]
+    # VirtualAlloc/VirtualProtect must not be counted as suspicious in Go.
+    api = next((f for f in report["findings"] if f["id"] == "content.suspicious_api"), None)
+    if api:
+        kws = {i["keyword"] for i in api["data"]["indicators"]}
+        assert "VirtualAlloc" not in kws and "VirtualProtect" not in kws
+    # Symbol-shaped "domains" filtered out; word-table not counted as base64.
+    assert content["domain_count"] == 0
+    assert content["base64_blob_count"] == 0
+
+
+def test_unvalidated_zip_signature_downgraded():
+    # PK\x03\x04 with no End-of-Central-Directory => coincidental, INFO only.
+    data = b"MZ" + b"\x00" * 200 + b"PK\x03\x04" + b"\x00" * 200
+    report = analyze(data, "x.bin")
+    fs = next((f for f in report["findings"] if f["id"] == "embedded.foreign_signature"
+               and f["data"].get("embedded_type") == "ZIP archive"), None)
+    assert fs is not None
+    assert fs["data"]["validated"] is False
+    assert fs["severity"] == "info"
+
+
 def test_full_iocs_included():
     data = b"visit http://evil.example.com/payload and http://c2.test/beacon now"
     report = analyze(data, "ioc.txt")

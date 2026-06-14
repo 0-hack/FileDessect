@@ -9,7 +9,17 @@ from __future__ import annotations
 import re
 
 from .base import Analyzer, AnalyzerResult, FileContext, Severity
-from .utils import extract_strings, is_human_readable, shannon_entropy
+from .utils import (
+    extract_strings,
+    is_human_readable,
+    is_valid_domain,
+    looks_like_base64,
+    shannon_entropy,
+)
+
+# API keywords that the Go/Rust runtimes legitimately use, so they should not
+# count toward "suspicious capability" clustering in those binaries.
+_RUNTIME_BENIGN_KEYWORDS = {"VirtualAlloc", "VirtualProtect"}
 
 _URL_RE = re.compile(r"\b(?:https?|ftp)://[^\s\"'<>\\]{4,200}", re.IGNORECASE)
 _IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
@@ -103,15 +113,18 @@ class ContentAnalyzer(Analyzer):
             {d for d in _DOMAIN_RE.findall(blob) if _interesting_domain(d)}
         )[:_MAX_IOC]
 
-        # Inventory every large base64 blob with its real file offset and length.
-        b64_inventory = [
-            {
-                "offset": m.start(),
-                "length": len(m.group()),
-                "preview": m.group()[:64].decode("ascii", "ignore"),
-            }
-            for m in list(_BASE64_BYTES_RE.finditer(data))[:_MAX_IOC]
-        ]
+        # Inventory base64 blobs — but only ones that genuinely look like base64,
+        # not densely-packed word/symbol tables (common in Go/Rust binaries).
+        b64_inventory = []
+        for m in _BASE64_BYTES_RE.finditer(data):
+            text = m.group().decode("ascii", "ignore")
+            if not looks_like_base64(text):
+                continue
+            b64_inventory.append(
+                {"offset": m.start(), "length": len(m.group()), "preview": text[:64]}
+            )
+            if len(b64_inventory) >= _MAX_IOC:
+                break
 
         result.metadata = {
             "entropy": round(overall_entropy, 3),
@@ -183,7 +196,12 @@ class ContentAnalyzer(Analyzer):
         hits: list[dict] = []
         max_sev = Severity.INFO
         lowered = blob.lower()
+        runtime = ctx.metadata.get("runtime")
         for keyword, (meaning, sev) in _SUSPICIOUS_KEYWORDS.items():
+            # In Go/Rust binaries, the runtime itself imports memory-management
+            # APIs; counting them as "suspicious" inflated false positives.
+            if runtime and keyword in _RUNTIME_BENIGN_KEYWORDS:
+                continue
             if keyword.lower() in lowered:
                 hits.append({"keyword": keyword, "meaning": meaning, "severity": sev.label})
                 max_sev = max(max_sev, sev)
@@ -221,7 +239,9 @@ def _plausible_ip(ip: str) -> bool:
 
 
 def _interesting_domain(domain: str) -> bool:
-    boring_tlds = (".png", ".jpg", ".gif", ".dll", ".exe", ".sys")
-    if domain.lower().endswith(boring_tlds):
+    # Only accept candidates whose final label is a real top-level domain. This
+    # eliminates the bulk of false positives where code symbols look
+    # domain-shaped (e.g. ``reflect.Value.CanInterface``, ``uuid.FromString``).
+    if len(domain) > 100:
         return False
-    return "." in domain and len(domain) <= 100
+    return is_valid_domain(domain)
