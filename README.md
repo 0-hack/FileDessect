@@ -46,6 +46,15 @@ findings.
   stripped/static detection, RWX segments.
 - **macOS Mach-O** (stdlib parser, thin & universal/fat): linked dylibs, segment
   permissions (RWX), code-signature presence and encrypted-region detection.
+- **Disassembly & assembly-level threats** (`capstone` — the engine family
+  behind Rizin/Cutter): disassembles the entry point and flags suspicious
+  machine code that import/source analysis can't see — PEB access
+  (`fs:[0x30]`/`gs:[0x60]`) for API-hash resolution, direct `syscall`/`sysenter`
+  stubs (EDR evasion), anti-analysis (`rdtsc`/`cpuid`), stack pivots and NOP
+  sleds. The annotated assembly listing is shown in the UI with suspicious lines
+  highlighted. Install the optional `rizin` binary (Cutter's engine) for added
+  function-count enrichment, and open the sample in
+  [**Cutter**](https://cutter.re) for deep interactive debugging.
 
 ### Source-code / script analysis
 - Reads the actual source of **Python, Windows batch, PowerShell, shell,

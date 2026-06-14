@@ -217,6 +217,19 @@ main { max-width: 980px; margin: 2rem auto; padding: 0 1.25rem; }
 }
 .datalist li { word-break: break-all; margin: 0.1rem 0; }
 
+/* Assembly / disassembly view */
+pre.asm {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 0.8rem; overflow-x: auto; max-height: 460px; font-size: 0.78rem;
+  white-space: pre; line-height: 1.45;
+}
+pre.asm > div { white-space: pre; }
+.asm-flag { border-radius: 4px; padding: 0 2px; }
+.asm-peb, .asm-anti-debug { background: rgba(248,81,73,0.18); color: #ffb4ad; }
+.asm-syscall, .asm-anti-analysis { background: rgba(210,153,34,0.18); color: #f0c451; }
+.asm-stack-pivot { background: rgba(240,136,62,0.18); color: #ffbf8f; }
+.asm-indirect { background: rgba(88,166,255,0.12); color: #9ecbff; }
+
 footer {
   text-align: center; color: var(--muted); font-size: 0.8rem;
   padding: 2rem 1rem; border-top: 1px solid var(--border); margin-top: 3rem;

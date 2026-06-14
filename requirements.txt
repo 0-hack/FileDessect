@@ -12,5 +12,8 @@ pyelftools==0.31
 yara-python==4.5.1
 oletools==0.60.2
 
+# Disassembly engine (the same engine family Cutter/Rizin build on).
+capstone==5.0.7
+
 # Reputation / external intel
 httpx==0.28.1

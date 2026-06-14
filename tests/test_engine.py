@@ -143,6 +143,40 @@ def test_readable_strings_filter_noise():
     assert not is_human_readable("aaaaaa")
 
 
+def test_disassembly_of_real_elf():
+    import shutil as _sh
+
+    if not _sh.os.path.exists("/bin/ls"):
+        return
+    data = open("/bin/ls", "rb").read()
+    report = analyze(data, "ls")
+    d = next((a for a in report["analyzers"] if a["analyzer"] == "disasm"), None)
+    assert d is not None
+    # Capstone may be unavailable in a bare env; only assert when it ran.
+    if d.get("error"):
+        return
+    meta = d["metadata"]
+    assert meta["architecture"] in ("x86", "x86_64", "arm", "arm64")
+    assert meta["disassembly"], "expected a disassembly listing"
+    first = meta["disassembly"][0]
+    assert {"addr", "bytes", "mnemonic", "op_str"} <= set(first)
+
+
+def test_disassembly_flags_peb_shellcode():
+    try:
+        import capstone  # noqa: F401
+    except Exception:
+        return
+    # x64 shellcode prologue: mov rax, gs:[0x60] (PEB access) + nop sled.
+    shellcode = b"\x65\x48\x8b\x04\x25\x60\x00\x00\x00" + b"\x90" * 20 + b"\x0f\x05\xc3"
+    # Wrap in a minimal ELF so the analyzer's loader picks it up? Instead test the
+    # byte-signature scan path directly via the classifier + signatures.
+    from backend.analyzers.disasm import _BYTE_SIGS
+
+    assert _BYTE_SIGS["peb_x64"][0].search(shellcode)
+    assert _BYTE_SIGS["nop_sled"][0].search(shellcode)
+
+
 def test_full_iocs_included():
     data = b"visit http://evil.example.com/payload and http://c2.test/beacon now"
     report = analyze(data, "ioc.txt")
