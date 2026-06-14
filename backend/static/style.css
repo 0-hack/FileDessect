@@ -73,6 +73,23 @@ main { max-width: 980px; margin: 2rem auto; padding: 0 1.25rem; }
   cursor: pointer; font-size: 1rem; padding: 0; text-decoration: underline;
 }
 
+.options {
+  margin-top: 1rem; padding: 0.9rem 1.1rem; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 10px;
+}
+.opt { display: flex; align-items: center; gap: 0.55rem; cursor: pointer; font-size: 0.92rem; }
+.opt input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+.opt em { color: var(--muted); font-style: normal; }
+.opt-note { margin: 0.45rem 0 0 2.1rem; color: var(--muted); font-size: 0.8rem; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
+.btn {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 0.5rem 0.9rem; font-size: 0.85rem; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.btn:hover { border-color: var(--accent); background: var(--panel); }
+
 .status {
   margin-top: 1.5rem; padding: 1rem 1.25rem;
   background: var(--panel); border: 1px solid var(--border);

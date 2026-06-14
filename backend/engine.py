@@ -130,13 +130,24 @@ class Engine:
             VirusTotalAnalyzer(),
         ]
 
-    def analyze(self, *, path: str, filename: str, data: bytes) -> dict:
+    def analyze(
+        self,
+        *,
+        path: str,
+        filename: str,
+        data: bytes,
+        enable_virustotal: bool = True,
+    ) -> dict:
         ctx = FileContext(path=path, filename=filename, size=len(data), data=data)
 
         results: list[AnalyzerResult] = []
         results.append(self.identity.run(ctx))  # seeds ctx.metadata
 
         for analyzer in self.analyzers:
+            # VirusTotal runs by default; users can opt out (e.g. for privacy or
+            # fully offline analysis), in which case no hash leaves the sandbox.
+            if analyzer.name == "virustotal" and not enable_virustotal:
+                continue
             try:
                 if analyzer.applies(ctx):
                     results.append(analyzer.run(ctx))
@@ -144,7 +155,9 @@ class Engine:
                 failed = AnalyzerResult(analyzer=analyzer.name, error=str(exc))
                 results.append(failed)
 
-        return self._build_report(ctx, results)
+        report = self._build_report(ctx, results)
+        report["virustotal_enabled"] = enable_virustotal
+        return report
 
     # ------------------------------------------------------------------ #
     def _build_report(self, ctx: FileContext, results: list[AnalyzerResult]) -> dict:

@@ -86,7 +86,16 @@ findings.
   — drop in your own `.yar`/`.yara` files to extend coverage.
 - **VirusTotal**: a reputation permalink for every file (by SHA-256), plus live
   engine-detection counts when a `VT_API_KEY` is configured. Only the **hash**
-  is sent to VirusTotal — never the file content.
+  is sent to VirusTotal — never the file content. **Enabled by default; users
+  can opt out per scan** (a checkbox in the UI, or `virustotal=false` on the
+  API) for fully offline analysis where no hash leaves the sandbox.
+
+### Report export
+- Export any report as **Markdown** or **JSON** straight from the UI (or copy
+  the Markdown to the clipboard). The Markdown export includes the verdict,
+  rationale, every finding with evidence, the score breakdown, the annotated
+  entry-point disassembly and a full analyzer-metadata appendix — formatted for
+  handing to a reverse-engineering expert (or an LLM) to verify the analysis.
 
 ---
 
@@ -144,7 +153,9 @@ docker run --rm -p 8000:8000 -e VT_API_KEY="$VT_API_KEY" filedessect
 | `POST` | `/api/analyze` | `multipart/form-data` with `file`; returns JSON report |
 
 ```bash
-curl -F "file=@suspicious.exe" http://localhost:8000/api/analyze | jq .verdict
+# VirusTotal runs by default; opt out with virustotal=false
+curl -F "file=@suspicious.exe" -F "virustotal=false" \
+     http://localhost:8000/api/analyze | jq .verdict
 ```
 
 The JSON report contains `verdict`, `risk_score`, `explanation`, `summary`

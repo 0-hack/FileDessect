@@ -11,7 +11,7 @@ import shutil
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -61,7 +61,10 @@ def health() -> dict:
 
 
 @app.post("/api/analyze")
-async def analyze(file: UploadFile = File(...)) -> JSONResponse:
+async def analyze(
+    file: UploadFile = File(...),
+    virustotal: bool = Form(True),
+) -> JSONResponse:
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file.")
@@ -77,7 +80,12 @@ async def analyze(file: UploadFile = File(...)) -> JSONResponse:
     stored = settings.upload_dir / f"{uuid.uuid4().hex}_{Path(filename).name}"
     try:
         stored.write_bytes(data)
-        report = engine.analyze(path=str(stored), filename=filename, data=data)
+        report = engine.analyze(
+            path=str(stored),
+            filename=filename,
+            data=data,
+            enable_virustotal=virustotal,
+        )
     finally:
         # We do not retain samples by default.
         try:

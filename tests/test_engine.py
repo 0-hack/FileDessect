@@ -52,8 +52,22 @@ def test_suspicious_powershell_strings_escalate():
 def test_report_structure():
     report = analyze(b"abc", "a.txt")
     for key in ("verdict", "risk_score", "explanation", "summary", "findings",
-                "identity", "analyzers", "scoring"):
+                "identity", "analyzers", "scoring", "virustotal_enabled"):
         assert key in report
+
+
+def test_virustotal_enabled_by_default():
+    report = Engine().analyze(path="/tmp/x", filename="a.txt", data=b"hello world")
+    assert report["virustotal_enabled"] is True
+    assert any(a["analyzer"] == "virustotal" for a in report["analyzers"])
+
+
+def test_virustotal_can_be_disabled():
+    report = Engine().analyze(
+        path="/tmp/x", filename="a.txt", data=b"hello world", enable_virustotal=False
+    )
+    assert report["virustotal_enabled"] is False
+    assert not any(a["analyzer"] == "virustotal" for a in report["analyzers"])
 
 
 def test_scoring_breakdown_matches_findings():
