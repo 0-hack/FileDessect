@@ -7,6 +7,7 @@ Exposes a small JSON API plus a self-contained web UI:
 """
 from __future__ import annotations
 
+import shutil
 import uuid
 from pathlib import Path
 
@@ -49,6 +50,8 @@ def health() -> dict:
             "elf_analysis": _have("elftools"),
             "macho_analysis": True,
             "script_analysis": True,
+            "disassembly": _have("capstone"),
+            "rizin_engine": bool(shutil.which("rizin") or shutil.which("rz")),
             "yara_signatures": _have("yara"),
             "office_macros": _have("oletools"),
             "virustotal_live": bool(settings.vt_api_key),

@@ -14,6 +14,8 @@ const CAP_LABELS = {
   elf_analysis: "ELF / Linux RE",
   macho_analysis: "macOS Mach-O",
   script_analysis: "Scripts / code",
+  disassembly: "Disassembly",
+  rizin_engine: "Rizin engine",
   yara_signatures: "YARA",
   office_macros: "Office macros",
   virustotal_live: "VirusTotal live",
@@ -291,6 +293,12 @@ function renderDetails(r) {
     blocks.push(subpanel("Linux ELF (reverse engineering)", sub.join("")));
   }
 
+  // Disassembly (assembly-level)
+  const da = by.disasm && by.disasm.metadata;
+  if (da && (da.disassembly || []).length) {
+    blocks.push(subpanel(`Disassembly — assembly view (${da.engine || "capstone"})`, renderDisasm(da)));
+  }
+
   // macOS Mach-O
   const mo = by.macho && by.macho.metadata;
   if (mo && mo.is_macho) {
@@ -402,6 +410,33 @@ function importsBlock(imports) {
     .map(([dll, fns]) => `<details class="evidence"><summary>${escapeHtml(dll)} (${fns.length})</summary><ul class="datalist">${fns.map((f) => `<li>${escapeHtml(f)}</li>`).join("")}</ul></details>`)
     .join("");
   return `<details class="evidence" open><summary>Imported functions by DLL (${dlls.length})</summary>${inner}</details>`;
+}
+
+function renderDisasm(da) {
+  const meta = kvTable({
+    Engine: da.engine,
+    Architecture: da.architecture,
+    "Entry point": da.entry_point,
+    "Instructions shown": da.instructions_shown,
+    "Rizin functions": da.rizin_function_count,
+  });
+  const lines = da.disassembly
+    .map((i) => {
+      const cls = i.flag ? ` class="asm-flag asm-${i.flag}"` : "";
+      const note = i.note ? `  ; ⚠ ${escapeHtml(i.note)}` : "";
+      const addr = escapeHtml(i.addr.padEnd(12));
+      const bytes = escapeHtml((i.bytes || "").padEnd(18).slice(0, 18));
+      const ins = escapeHtml(`${i.mnemonic} ${i.op_str}`.trim());
+      return `<div${cls}>${addr}${bytes}${ins}${note}</div>`;
+    })
+    .join("");
+  const legend =
+    '<p class="dz-note">Highlighted lines are suspicious machine-code constructs ' +
+    '(PEB access, direct syscalls, anti-analysis, anti-debug, stack pivots). ' +
+    'For deep interactive debugging, open the file in <strong>Cutter</strong> ' +
+    '(<a class="vt-link" href="https://cutter.re" target="_blank" rel="noopener">cutter.re</a>), ' +
+    'which uses the same Rizin/Capstone engine.</p>';
+  return `${meta}${legend}<pre class="asm">${lines}</pre>`;
 }
 
 function fmtBool(v) {

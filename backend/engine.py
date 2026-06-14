@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from .analyzers.base import AnalyzerResult, FileContext, Finding, Severity, Verdict
 from .analyzers.code import ScriptAnalyzer
 from .analyzers.content import ContentAnalyzer
+from .analyzers.disasm import DisassemblyAnalyzer
 from .analyzers.elf import ELFAnalyzer
 from .analyzers.embedded import EmbeddedAnalyzer
 from .analyzers.identity import IdentityAnalyzer
@@ -122,6 +123,7 @@ class Engine:
             PEAnalyzer(),
             ELFAnalyzer(),
             MachOAnalyzer(),
+            DisassemblyAnalyzer(),
             ScriptAnalyzer(),
             OfficeAnalyzer(),
             YaraAnalyzer(),

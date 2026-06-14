@@ -13,6 +13,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Optional: Rizin — the open-source reverse-engineering engine that powers the
+# Cutter GUI. When present, FileDessect enriches its disassembly with Rizin's
+# function analysis. Installed tolerantly so the image still builds where the
+# package is unavailable (the Capstone engine is always used regardless).
+RUN apt-get update \
+    && (apt-get install -y --no-install-recommends rizin || \
+        echo "rizin unavailable in this base image; continuing without it") \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Install Python dependencies first to leverage Docker layer caching.
