@@ -68,9 +68,23 @@ findings.
   (`fs:[0x30]`/`gs:[0x60]`) for API-hash resolution, direct `syscall`/`sysenter`
   stubs (EDR evasion), anti-analysis (`rdtsc`/`cpuid`), stack pivots and NOP
   sleds. The annotated assembly listing is shown in the UI with suspicious lines
-  highlighted. Install the optional `rizin` binary (Cutter's engine) for added
-  function-count enrichment, and open the sample in
-  [**Cutter**](https://cutter.re) for deep interactive debugging.
+  highlighted.
+- **Cutter / Rizin deep analysis** (`cutter` analyzer, needs the `rizin` binary —
+  the engine [**Cutter**](https://cutter.re) is built on): goes beyond the
+  entry-point window to recover *program structure* for any PE/ELF/Mach-O —
+  a full **function listing**, **per-function disassembly** of the entry point
+  and of the functions that actually call dangerous imports (the real call
+  sites), **import → caller cross-references** ("where is `CreateRemoteThread`
+  used?"), and **decompiled pseudo-C** when the `rz-ghidra` plugin is installed.
+  Every report includes a downloadable **Cutter/Rizin session script** so you can
+  reproduce the analysis and jump straight to the flagged call sites in the
+  real Cutter GUI.
+  - **Interactive debugging (opt-in, `INTERACTIVE_DISASM=true`):** retains the
+    uploaded binary in an isolated session for a short TTL and exposes
+    `/api/session/{id}/{functions,disasm,decompile}` endpoints, so the UI lets
+    you click any function to disassemble/decompile it live — "Cutter in the
+    browser". Off by default because it temporarily retains the sample; the
+    one-shot deep analysis above needs no retention.
 
 ### Source-code / script analysis
 - Reads the actual source of **Python, Windows batch, PowerShell, shell,
@@ -167,12 +181,20 @@ docker run --rm -p 8000:8000 -e VT_API_KEY="$VT_API_KEY" filedessect
 | `GET`  | `/api/health`  | Liveness + which optional capabilities are on  |
 | `GET`  | `/api/scoring` | The scoring/verdict model (weights, thresholds) |
 | `POST` | `/api/analyze` | `multipart/form-data` with `file`; returns JSON report |
+| `GET`  | `/api/session/{id}/functions` | Interactive: function list (opt-in) |
+| `GET`  | `/api/session/{id}/disasm?target=` | Interactive: disassemble a function/address |
+| `GET`  | `/api/session/{id}/decompile?target=` | Interactive: decompile (needs `rz-ghidra`) |
+| `DELETE` | `/api/session/{id}` | Interactive: end session, purge the sample |
 
 ```bash
 # VirusTotal runs by default; opt out with virustotal=false
 curl -F "file=@suspicious.exe" -F "virustotal=false" \
      http://localhost:8000/api/analyze | jq .verdict
 ```
+
+The `/api/session/*` endpoints exist only when `INTERACTIVE_DISASM=true`; the
+analyze response then carries a `session` object (`{id, ttl_seconds}`) and the UI
+turns every function into a clickable live-disassembly target.
 
 The JSON report contains `verdict`, `risk_score`, `explanation`, `summary`
 (severity counts), `identity` (hashes/type), per-analyzer `analyzers`, and the
@@ -184,9 +206,11 @@ flattened `findings` list (each with `id`, `severity`, `description`, `data`).
 
 ```
 backend/
-  main.py              FastAPI app: /api/analyze, /api/health, static UI
+  main.py              FastAPI app: /api/analyze, /api/health, sessions, static UI
   engine.py            Orchestrates analyzers, computes verdict + explanation
   config.py            Env-driven settings
+  rizin.py             Rizin (Cutter engine) driver: deep analysis + session script
+  sessions.py          Opt-in interactive-disassembly session store (TTL)
   analyzers/
     base.py            Finding / Severity / Verdict / Analyzer framework
     identity.py        Hashes, file typing, masquerade detection
@@ -194,6 +218,8 @@ backend/
     embedded.py        Hidden/embedded content & trailing-data detection
     pe.py              Windows PE reverse engineering
     elf.py             Linux ELF reverse engineering
+    disasm.py          Capstone entry-point disassembly + shellcode signatures
+    cutter.py          Cutter/Rizin deep analysis (functions, xrefs, decompile)
     office.py          VBA macro analysis (oletools)
     yara_scan.py       YARA signature matching
     virustotal.py      Hash reputation (link + optional live lookup)

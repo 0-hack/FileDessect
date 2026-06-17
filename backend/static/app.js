@@ -16,6 +16,8 @@ const CAP_LABELS = {
   script_analysis: "Scripts / code",
   disassembly: "Disassembly",
   rizin_engine: "Rizin engine",
+  cutter_deep_analysis: "Cutter deep analysis",
+  interactive_disasm: "Interactive debug",
   yara_signatures: "YARA",
   office_macros: "Office macros",
   virustotal_live: "VirusTotal live",
@@ -92,9 +94,11 @@ async function analyze(file) {
 
 // --- Rendering --------------------------------------------------------------
 let lastReport = null;
+let lastSession = null;
 
 function renderReport(r) {
   lastReport = r;
+  lastSession = r.session || null;
   const vt = findVtLink(r);
   const html = [];
 
@@ -193,6 +197,10 @@ function handleExport(kind) {
       () => flashCopied(),
       () => downloadBlob(md, `filedessect_${shortHash}.md`, "text/markdown")
     );
+  } else if (kind === "cutter-script") {
+    const cu = (lastReport.analyzers || []).find((a) => a.analyzer === "cutter");
+    const script = cu && cu.metadata && cu.metadata.session_script;
+    if (script) downloadBlob(script, `filedessect_session_${shortHash}.rz`, "text/plain");
   }
 }
 
@@ -286,6 +294,44 @@ function reportToMarkdown(r) {
       L.push(`${(i.addr + "").padEnd(12)}${(i.bytes || "").padEnd(18)}${i.mnemonic} ${i.op_str}${note}`);
     }
     L.push("```", "");
+  }
+
+  // Cutter / Rizin deep analysis — function-level structure for an RE expert.
+  const cu = (r.analyzers || []).find((a) => a.analyzer === "cutter");
+  if (cu?.metadata?.function_count != null) {
+    const m = cu.metadata;
+    L.push(`## Cutter / Rizin deep analysis (${m.engine || "rizin"})`);
+    L.push("");
+    L.push(`- **Functions recovered:** ${m.function_count}`);
+    if (m.info?.arch) L.push(`- **Architecture:** ${m.info.arch} ${m.info.bits || ""}-bit`);
+    if (m.decompiler) L.push(`- **Decompiler:** ${m.decompiler}`);
+    L.push("");
+    if ((m.import_xrefs || []).length) {
+      L.push(`### Dangerous-import call sites`, "");
+      L.push(`| Import | Called from |`, `| --- | --- |`);
+      for (const x of m.import_xrefs) {
+        const callers = (x.callers || []).map((c) => `${c.fcn_name || c.from || "?"}${c.from ? " @ " + c.from : ""}`).join(", ");
+        L.push(`| \`${x.import}\` | ${mdEsc(callers)} |`);
+      }
+      L.push("");
+    }
+    for (const name of Object.keys(m.disassembly || {})) {
+      const fn = m.disassembly[name];
+      L.push(`### Disassembly: ${name} (${fn.addr || ""})`, "", "```asm");
+      for (const o of fn.ops || []) {
+        const c = o.comment ? `  ; ${o.comment}` : "";
+        L.push(`${(o.addr || "").padEnd(12)}${(o.bytes || "").padEnd(18)}${o.text || ""}${c}`);
+      }
+      L.push("```", "");
+      if (m.decompilation && m.decompilation[name]) {
+        L.push(`Decompiled pseudo-C:`, "", "```c", m.decompilation[name], "```", "");
+      }
+    }
+    if (m.session_script) {
+      L.push(`### Cutter / Rizin session script`, "");
+      L.push("Save as `filedessect_session.rz` and run `rizin -i filedessect_session.rz <file>` (or paste into Cutter's console):", "");
+      L.push("```", m.session_script, "```", "");
+    }
   }
 
   // Raw analyzer metadata appendix for completeness.
@@ -439,6 +485,12 @@ function renderDetails(r) {
     blocks.push(subpanel(`Disassembly — assembly view (${da.engine || "capstone"})`, renderDisasm(da)));
   }
 
+  // Cutter / Rizin deep analysis (function-level)
+  const cu = by.cutter && by.cutter.metadata;
+  if (cu && (cu.function_count || (cu.functions || []).length)) {
+    blocks.push(subpanel(`Cutter / Rizin deep analysis (${escapeHtml(cu.engine || "rizin")})`, renderCutter(cu, r.session)));
+  }
+
   // macOS Mach-O
   const mo = by.macho && by.macho.metadata;
   if (mo && mo.is_macho) {
@@ -577,6 +629,181 @@ function renderDisasm(da) {
     '(<a class="vt-link" href="https://cutter.re" target="_blank" rel="noopener">cutter.re</a>), ' +
     'which uses the same Rizin/Capstone engine.</p>';
   return `${meta}${legend}<pre class="asm">${lines}</pre>`;
+}
+
+// --- Cutter / Rizin deep analysis -------------------------------------------
+function renderCutter(cu, session) {
+  const info = cu.info || {};
+  const parts = [];
+  parts.push(
+    kvTable({
+      Engine: cu.engine,
+      Architecture: info.arch,
+      Bits: info.bits,
+      Class: info.class,
+      Compiler: info.compiler || info.language,
+      "Functions recovered": cu.function_count,
+      Decompiler: cu.decompiler || "not installed",
+    })
+  );
+
+  // Interactive banner.
+  if (session && session.id) {
+    parts.push(
+      `<p class="dz-note">⚡ <strong>Interactive debug session active.</strong> ` +
+        `Click any function or call site below to disassemble it live; the sample ` +
+        `is retained in the sandbox for ${Math.round((session.ttl_seconds || 0) / 60)} min. ` +
+        `<button class="btn btn-small" data-rz-end="${escapeHtml(session.id)}">End session now</button></p>`
+    );
+  } else {
+    parts.push(
+      `<p class="dz-note">For live, click-through debugging of every function, ` +
+        `enable interactive mode (<code>INTERACTIVE_DISASM=true</code>) or open the ` +
+        `downloadable session script below in <strong>Cutter</strong>.</p>`
+    );
+  }
+
+  // Session-script download.
+  if (cu.session_script) {
+    parts.push(
+      `<div class="toolbar"><button class="btn" data-export="cutter-script">⬇ Download Cutter / Rizin session script</button></div>`
+    );
+  }
+
+  // Import -> caller cross-references (the real call sites).
+  if ((cu.import_xrefs || []).length) {
+    const rows = cu.import_xrefs
+      .map((x) => {
+        const callers = (x.callers || [])
+          .map((c) => rzTargetLink(session, c.fcn_name || c.from, `${escapeHtml(c.fcn_name || c.from)}${c.from ? " @ " + escapeHtml(c.from) : ""}`))
+          .join(", ");
+        return `<tr><td><code>${escapeHtml(x.import)}</code></td><td>${callers || "—"}</td></tr>`;
+      })
+      .join("");
+    parts.push(
+      `<details class="evidence" open><summary>Dangerous-import call sites (${cu.import_xrefs.length})</summary>` +
+        `<table class="dtable"><thead><tr><th>Import</th><th>Called from</th></tr></thead><tbody>${rows}</tbody></table></details>`
+    );
+  }
+
+  // Function list.
+  if ((cu.functions || []).length) {
+    const items = cu.functions
+      .slice(0, 400)
+      .map((f) => `<li>${rzTargetLink(session, f.name || f.addr, `${escapeHtml(f.name || "?")} <span class="muted">(${escapeHtml(f.addr || "?")}, ${f.ninstrs || 0} ins)</span>`)}</li>`)
+      .join("");
+    parts.push(
+      `<details class="evidence"><summary>Functions (${cu.functions.length})</summary><ul class="datalist">${items}</ul></details>`
+    );
+  }
+
+  // Pre-extracted disassembly of entry/main and flagged functions.
+  const dis = cu.disassembly || {};
+  const dec = cu.decompilation || {};
+  for (const name of Object.keys(dis)) {
+    const fn = dis[name];
+    let inner = rzAsmHtml(fn);
+    if (dec[name]) {
+      inner += `<details class="evidence"><summary>Decompiled pseudo-C</summary><pre class="asm">${escapeHtml(dec[name])}</pre></details>`;
+    }
+    parts.push(
+      `<details class="evidence"${name === "entry0" ? " open" : ""}><summary>Disassembly: ${escapeHtml(name)} <span class="muted">(${escapeHtml(fn.addr || "")})</span></summary>${inner}</details>`
+    );
+  }
+
+  // Live render target for interactive disassembly.
+  if (session && session.id) {
+    parts.push(`<div id="rzLive"></div>`);
+  }
+
+  return parts.join("");
+}
+
+function rzTargetLink(session, target, label) {
+  if (!session || !session.id || !target) return label;
+  return `<a href="#" class="rz-link" data-rz-disasm="${escapeHtml(target)}">${label}</a>`;
+}
+
+function rzAsmHtml(fn) {
+  const lines = (fn.ops || [])
+    .map((o) => {
+      const addr = escapeHtml((o.addr || "").padEnd(12));
+      const bytes = escapeHtml((o.bytes || "").padEnd(18).slice(0, 18));
+      const text = escapeHtml(o.text || "");
+      const comment = o.comment ? `  ; ${escapeHtml(o.comment)}` : "";
+      return `<div>${addr}${bytes}${text}${comment}</div>`;
+    })
+    .join("");
+  return `<pre class="asm">${lines}</pre>`;
+}
+
+// Delegated handlers for interactive Rizin sessions.
+reportEl.addEventListener("click", async (e) => {
+  const dis = e.target.closest("[data-rz-disasm]");
+  const end = e.target.closest("[data-rz-end]");
+  if (dis) {
+    e.preventDefault();
+    await rzDisassemble(dis.dataset.rzDisasm);
+  } else if (end) {
+    e.preventDefault();
+    await rzEndSession(end.dataset.rzEnd);
+  }
+});
+
+async function rzDisassemble(target) {
+  const live = document.getElementById("rzLive");
+  if (!live || !lastSession) return;
+  live.innerHTML = `<p class="dz-note">Disassembling <code>${escapeHtml(target)}</code>…</p>`;
+  try {
+    const res = await fetch(`/api/session/${lastSession.id}/disasm?target=${encodeURIComponent(target)}`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+    const data = await res.json();
+    let html = `<details class="evidence" open><summary>Disassembly: ${escapeHtml(target)} <span class="muted">(${escapeHtml(data.disassembly.addr || "")})</span></summary>${rzAsmHtml(data.disassembly)}`;
+    html += `<div class="toolbar"><button class="btn btn-small" data-rz-decompile="${escapeHtml(target)}">⌗ Decompile</button></div></details>`;
+    live.innerHTML = html;
+    const btn = live.querySelector("[data-rz-decompile]");
+    if (btn) btn.addEventListener("click", () => rzDecompile(target, live));
+  } catch (err) {
+    live.innerHTML = `<div class="error-box">⚠️ ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function rzDecompile(target, live) {
+  try {
+    const res = await fetch(`/api/session/${lastSession.id}/decompile?target=${encodeURIComponent(target)}`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+    const data = await res.json();
+    const block = document.createElement("details");
+    block.className = "evidence";
+    block.open = true;
+    block.innerHTML = `<summary>Decompiled pseudo-C: ${escapeHtml(target)}</summary><pre class="asm">${escapeHtml(data.code)}</pre>`;
+    live.appendChild(block);
+  } catch (err) {
+    const box = document.createElement("div");
+    box.className = "error-box";
+    box.textContent = `⚠️ ${err.message}`;
+    live.appendChild(box);
+  }
+}
+
+async function rzEndSession(sid) {
+  try {
+    await fetch(`/api/session/${sid}`, { method: "DELETE" });
+  } catch (e) {
+    /* best-effort */
+  }
+  lastSession = null;
+  const live = document.getElementById("rzLive");
+  if (live) live.innerHTML = "";
+  flashNote("Interactive session ended; sample purged from the sandbox.");
+}
+
+function flashNote(msg) {
+  const el = document.createElement("div");
+  el.className = "dz-note";
+  el.textContent = msg;
+  reportEl.prepend(el);
+  setTimeout(() => el.remove(), 4000);
 }
 
 function fmtBool(v) {

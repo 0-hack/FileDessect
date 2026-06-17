@@ -13,10 +13,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Optional: Rizin — the open-source reverse-engineering engine that powers the
-# Cutter GUI. When present, FileDessect enriches its disassembly with Rizin's
-# function analysis. Installed tolerantly so the image still builds where the
-# package is unavailable (the Capstone engine is always used regardless).
+# Rizin — the open-source reverse-engineering engine that powers the Cutter GUI.
+# When present, the `cutter` analyzer recovers full program structure: a function
+# listing, per-function disassembly, import->caller cross-references, and (with a
+# decompiler plugin) pseudo-C. It also backs the opt-in interactive disassembly
+# session endpoints (INTERACTIVE_DISASM=true). Installed tolerantly so the image
+# still builds where the package is unavailable (Capstone is always used).
+#
+# For decompilation, additionally install the `rz-ghidra` plugin in your image
+# (e.g. `rz-pm install rz-ghidra`); it is optional and detected at runtime.
 RUN apt-get update \
     && (apt-get install -y --no-install-recommends rizin || \
         echo "rizin unavailable in this base image; continuing without it") \

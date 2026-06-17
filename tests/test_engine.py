@@ -254,6 +254,90 @@ def test_unvalidated_zip_signature_downgraded():
     assert fs["severity"] == "info"
 
 
+def test_rizin_marker_split_roundtrip():
+    from backend import rizin
+
+    out = (
+        "analysis noise line\n"
+        f"{rizin._MARKER_PREFIX}functions{rizin._MARKER_SUFFIX}\n"
+        '[{"name":"main","offset":4096}]\n'
+        f"{rizin._MARKER_PREFIX}info{rizin._MARKER_SUFFIX}\n"
+        '{"bin":{"arch":"x86"}}\n'
+    )
+    chunks = rizin._split_markers(out)
+    assert chunks["functions"] == '[{"name":"main","offset":4096}]'
+    assert rizin._loadj(chunks["info"]) == {"bin": {"arch": "x86"}}
+
+
+def test_rizin_safe_seek_blocks_command_injection():
+    from backend import rizin
+
+    # Legitimate targets pass through unchanged.
+    assert rizin._safe_seek("main") == "main"
+    assert rizin._safe_seek("0x401000") == "0x401000"
+    assert rizin._safe_seek("sym.imp.CreateRemoteThread") == "sym.imp.CreateRemoteThread"
+    # Anything that could chain another rizin command is rejected.
+    for evil in ("main; px", "0x10`id`", "main|grep", "a@b", "", "  "):
+        assert rizin._safe_seek(evil) is None
+
+
+def test_rizin_session_script_targets_dangerous_imports():
+    from backend import rizin
+
+    script = rizin.build_session_script("evil.exe", ["CreateRemoteThread", "WriteProcessMemory"])
+    assert "aaa" in script
+    assert "s entry0" in script
+    assert "axt @ sym.imp.CreateRemoteThread" in script
+    assert "evil.exe" in script
+    # Newlines in a filename must not break out of the comment line.
+    assert "\n" not in rizin.build_session_script("a\nb.exe", []).splitlines()[0]
+
+
+def test_rizin_decode_base64_comment():
+    import base64
+
+    from backend import rizin
+
+    encoded = base64.b64encode(b"resolve API by hash").decode()
+    assert rizin._decode_comment(encoded) == "resolve API by hash"
+    assert rizin._decode_comment("plain comment") == "plain comment"
+    assert rizin._decode_comment(None) is None
+
+
+def test_cutter_analyzer_skips_without_rizin(monkeypatch):
+    from backend import rizin
+    from backend.analyzers.base import FileContext
+    from backend.analyzers.cutter import CutterAnalyzer
+
+    monkeypatch.setattr(rizin, "available", lambda: False)
+    ctx = FileContext(path="/tmp/x", filename="x.exe", size=4, data=b"MZ\x00\x00")
+    assert CutterAnalyzer().applies(ctx) is False
+
+
+def test_session_store_lifecycle(tmp_path):
+    from backend.sessions import SessionStore
+
+    store = SessionStore(tmp_path, ttl_seconds=1000)
+    sid = store.create(b"MZ\x00\x00binary", "x.exe")
+    assert store.path(sid) is not None
+    assert store.get(sid).filename == "x.exe"
+    assert store.delete(sid) is True
+    assert store.path(sid) is None
+    assert store.delete(sid) is False
+
+
+def test_session_store_expiry(tmp_path):
+    from pathlib import Path
+
+    from backend.sessions import SessionStore
+
+    store = SessionStore(tmp_path, ttl_seconds=0)  # everything is already expired
+    sid = store.create(b"data", "x.bin")
+    # purge runs on access; the expired session and its file are gone.
+    assert store.path(sid) is None
+    assert not list(Path(tmp_path).glob("*.bin"))
+
+
 def test_full_iocs_included():
     data = b"visit http://evil.example.com/payload and http://c2.test/beacon now"
     report = analyze(data, "ioc.txt")

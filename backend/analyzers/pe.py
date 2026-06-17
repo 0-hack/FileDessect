@@ -132,6 +132,10 @@ class PEAnalyzer(Analyzer):
         self._analyze_signature(pe, result, meta)
         self._analyze_tls(pe, result, meta)
 
+        # Share the dangerous imports with later analyzers (notably `cutter`,
+        # which cross-references them to their call sites in the disassembly).
+        ctx.metadata["dangerous_imports"] = meta.get("dangerous_imports", [])
+
         result.metadata = meta
         try:
             pe.close()
@@ -212,6 +216,9 @@ class PEAnalyzer(Analyzer):
         capabilities: dict[str, Severity] = {}
         import_count = 0
         imported_dlls = []
+        # Functions present in the capability map — the ones worth locating in
+        # the disassembly (consumed by the `cutter` analyzer).
+        dangerous_imports: list[str] = []
         # Full DLL -> [function] map so the report lists every imported API.
         imports_detail: dict[str, list[str]] = {}
         if hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
@@ -232,12 +239,15 @@ class PEAnalyzer(Analyzer):
                     cap = _CAPABILITY_MAP.get(fname)
                     if cap:
                         label, sev = cap
+                        if fname not in dangerous_imports:
+                            dangerous_imports.append(fname)
                         if label not in capabilities or sev > capabilities[label]:
                             capabilities[label] = sev
 
         meta["imported_dlls"] = imported_dlls
         meta["import_count"] = import_count
         meta["imports"] = imports_detail
+        meta["dangerous_imports"] = dangerous_imports
         meta["capabilities"] = [
             {"capability": c, "severity": s.label} for c, s in capabilities.items()
         ]

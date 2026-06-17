@@ -89,6 +89,9 @@ main { max-width: 980px; margin: 2rem auto; padding: 0 1.25rem; }
   transition: border-color 0.15s, background 0.15s;
 }
 .btn:hover { border-color: var(--accent); background: var(--panel); }
+.btn-small { padding: 0.2rem 0.5rem; font-size: 0.75rem; }
+.rz-link { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); cursor: pointer; }
+.rz-link:hover { background: rgba(88,166,255,0.12); }
 
 .status {
   margin-top: 1.5rem; padding: 1rem 1.25rem;

@@ -12,16 +12,15 @@ import-level analysis cannot see:
   * embedded ``INT3`` breakpoint runs and ``NOP`` sleds (shellcode markers);
   * stack pivots used by ROP chains.
 
-When the optional ``rizin`` binary (Cutter's engine) is installed, the report is
-additionally enriched with Rizin's function count. The annotated entry-point
-listing is returned for display so the user can read the assembly directly.
+The annotated entry-point listing is returned for display so the user can read
+the assembly directly. For full function-level structure (function listing,
+import call sites, decompilation) the companion :mod:`~backend.analyzers.cutter`
+analyzer drives the Rizin engine when the ``rizin`` binary is installed.
 """
 from __future__ import annotations
 
 import io
 import re
-import shutil
-import subprocess
 
 from .base import Analyzer, AnalyzerResult, FileContext, Severity
 
@@ -152,7 +151,6 @@ class DisassemblyAnalyzer(Analyzer):
 
         runtime = ctx.metadata.get("runtime")
         self._emit_findings(result, category_counts, sig_hits, archkey, runtime)
-        self._rizin_enrich(ctx, result)
         return result
 
     # ------------------------------------------------------------------ #
@@ -261,26 +259,6 @@ class DisassemblyAnalyzer(Analyzer):
                 severity=pivot_sev,
                 category="disassembly",
             )
-
-    def _rizin_enrich(self, ctx: FileContext, result: AnalyzerResult) -> None:
-        """If Rizin (Cutter's engine) is installed, add its function count."""
-        rizin = shutil.which("rizin") or shutil.which("rz")
-        if not rizin or ctx.size > 20 * 1024 * 1024:
-            return
-        try:
-            proc = subprocess.run(
-                [rizin, "-q", "-e", "scr.color=0", "-c", "aa;afl~?", ctx.path],
-                capture_output=True,
-                timeout=45,
-                check=False,
-            )
-            out = proc.stdout.decode("utf-8", "ignore").strip()
-            if out.isdigit():
-                result.metadata["engine"] = "capstone + rizin"
-                result.metadata["rizin_function_count"] = int(out)
-        except (subprocess.TimeoutExpired, OSError, ValueError):
-            # Rizin enrichment is strictly best-effort.
-            pass
 
     # ------------------------------------------------------------------ #
     def _load(self, ctx: FileContext):
