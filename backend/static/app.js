@@ -690,7 +690,10 @@ function renderCutter(cu, session) {
   if ((cu.functions || []).length) {
     const items = cu.functions
       .slice(0, 400)
-      .map((f) => `<li>${rzTargetLink(session, f.name || f.addr, `${escapeHtml(f.name || "?")} <span class="muted">(${escapeHtml(f.addr || "?")}, ${f.ninstrs || 0} ins)</span>`)}</li>`)
+      .map((f) => {
+        const detail = f.ninstrs ? `${f.ninstrs} ins` : `${f.size || 0} B${f.nbbs ? `, ${f.nbbs} bb` : ""}`;
+        return `<li>${rzTargetLink(session, f.name || f.addr, `${escapeHtml(f.name || "?")} <span class="muted">(${escapeHtml(f.addr || "?")}, ${detail})</span>`)}</li>`;
+      })
       .join("");
     parts.push(
       `<details class="evidence"><summary>Functions (${cu.functions.length})</summary><ul class="datalist">${items}</ul></details>`

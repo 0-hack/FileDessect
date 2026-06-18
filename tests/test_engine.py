@@ -293,6 +293,24 @@ def test_rizin_session_script_targets_dangerous_imports():
     assert "\n" not in rizin.build_session_script("a\nb.exe", []).splitlines()[0]
 
 
+def test_rizin_resolve_function_nearest_preceding():
+    from backend import rizin
+
+    # Functions starting at 0x1000, 0x2000, 0x3000 (names, one unnamed).
+    funcs = [
+        {"offset": 0x1000, "name": "main"},
+        {"offset": 0x3000, "name": "helper"},
+        {"offset": 0x2000, "name": None},  # unnamed; index must stay bisect-safe
+    ]
+    idx = rizin._function_index(funcs)
+    # An address inside main resolves to main, not to a later/overlapping function.
+    assert rizin._resolve_function(idx, 0x1500) == ("main", 0x1000)
+    assert rizin._resolve_function(idx, 0x2000) == (None, 0x2000)
+    assert rizin._resolve_function(idx, 0x3abc) == ("helper", 0x3000)
+    # Below the first function start -> unresolved.
+    assert rizin._resolve_function(idx, 0x500) == (None, None)
+
+
 def test_rizin_decode_base64_comment():
     import base64
 

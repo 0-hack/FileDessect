@@ -14,18 +14,40 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Rizin — the open-source reverse-engineering engine that powers the Cutter GUI.
-# When present, the `cutter` analyzer recovers full program structure: a function
-# listing, per-function disassembly, import->caller cross-references, and (with a
-# decompiler plugin) pseudo-C. It also backs the opt-in interactive disassembly
-# session endpoints (INTERACTIVE_DISASM=true). Installed tolerantly so the image
-# still builds where the package is unavailable (Capstone is always used).
+# It drives the `cutter` analyzer (function listing, per-function disassembly,
+# import->caller cross-references, and — with a decompiler plugin — pseudo-C) and
+# the opt-in interactive disassembly endpoints (INTERACTIVE_DISASM=true).
+#
+# Rizin is NOT packaged in Debian bookworm (this image's base), so we install the
+# upstream self-contained static build from the official GitHub release rather
+# than apt. On amd64 the install is verified and the build FAILS if rizin is
+# missing, so the image can never silently ship without the engine. On other
+# architectures (no static linux release) we fall back to apt tolerantly.
 #
 # For decompilation, additionally install the `rz-ghidra` plugin in your image
 # (e.g. `rz-pm install rz-ghidra`); it is optional and detected at runtime.
-RUN apt-get update \
-    && (apt-get install -y --no-install-recommends rizin || \
-        echo "rizin unavailable in this base image; continuing without it") \
-    && rm -rf /var/lib/apt/lists/*
+ARG RIZIN_VERSION=0.8.2
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    if [ "$arch" = "amd64" ]; then \
+        apt-get update; \
+        apt-get install -y --no-install-recommends curl xz-utils ca-certificates; \
+        curl -fsSL -o /tmp/rizin.tar.xz \
+          "https://github.com/rizinorg/rizin/releases/download/v${RIZIN_VERSION}/rizin-v${RIZIN_VERSION}-static-x86_64.tar.xz"; \
+        mkdir -p /tmp/rz; \
+        tar -xJf /tmp/rizin.tar.xz -C /tmp/rz; \
+        cp -a /tmp/rz/bin/rizin /usr/local/bin/rizin; \
+        cp -a /tmp/rz/share/. /usr/local/share/; \
+        rm -rf /tmp/rizin.tar.xz /tmp/rz; \
+        apt-get purge -y curl xz-utils; apt-get autoremove -y; \
+        rm -rf /var/lib/apt/lists/*; \
+        rizin -v; \
+    else \
+        apt-get update; \
+        (apt-get install -y --no-install-recommends rizin || \
+          echo "rizin unavailable for $arch; deep analysis disabled (Capstone still used)"); \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
 
 WORKDIR /app
 

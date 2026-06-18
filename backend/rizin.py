@@ -29,10 +29,12 @@ from functools import lru_cache
 from typing import Any
 
 # A line that separates one command's output from the next in a batched run.
-# We emit it with rizin's ``?e`` (echo) command between sub-commands. The marker
-# deliberately uses only ``[A-Za-z0-9_]`` — rizin/r2 treat ``< > | ~ @ ; #`` and
+# We emit it with rizin's ``echo`` command between sub-commands. The marker
+# deliberately uses only ``[A-Za-z0-9_]`` — rizin treats ``< > | ~ @ ; #`` and
 # backticks as redirection / piping / seek operators, so a marker containing any
 # of them would be swallowed by the command parser instead of printed.
+# (Note: rizin's echo command is ``echo``; the ``?e`` spelling is an r2-ism that
+# rizin does not accept.)
 _MARKER_PREFIX = "FDxMARKERx"
 _MARKER_SUFFIX = "xENDx"
 _MARKER_RE = re.compile(
@@ -90,19 +92,28 @@ def _batch(path: str, commands: list[tuple[str, str]], timeout: int) -> dict[str
     ``commands`` is an ordered list of ``(key, rizin_command)``. Each command's
     output is captured under its key. The first command should perform analysis
     (e.g. ``aaa``); its (noisy) output is captured under its own key and ignored.
+
+    Commands are fed on **stdin**, one per line, rather than via a single ``-c``
+    string. This matters: rizin aborts the remainder of a ``;``-separated ``-c``
+    chain as soon as one command errors (e.g. seeking to a flag that does not
+    exist), which would silently truncate the batch. Its stdin REPL instead
+    prints the error and continues to the next line, so a single bad query
+    (a missing ``sym.imp.X``, a stripped binary with no ``main``) no longer
+    discards every later result. One process, one analysis pass.
     """
     rz = rizin_binary()
     if not rz:
         return None
-    script_parts: list[str] = []
+    lines: list[str] = []
     for key, cmd in commands:
-        script_parts.append(f"?e {_MARKER_PREFIX}{key}{_MARKER_SUFFIX}")
-        script_parts.append(cmd)
-    script = "; ".join(script_parts)
+        lines.append(f"echo {_MARKER_PREFIX}{key}{_MARKER_SUFFIX}")
+        lines.append(cmd)
+    lines.append("q")  # quit cleanly at end of script
+    script = ("\n".join(lines) + "\n").encode("utf-8", "ignore")
     try:
         proc = subprocess.run(
-            [rz, "-q", "-e", "scr.color=0", "-e", "scr.interactive=false",
-             "-c", script, path],
+            [rz, "-q", "-e", "scr.color=0", "-e", "scr.interactive=false", path],
+            input=script,
             capture_output=True,
             timeout=timeout,
             check=False,
@@ -217,8 +228,12 @@ def deep_analysis(
         ("disasm_entry0", "pdfj @ entry0"),
         ("disasm_main", "pdfj @ main"),
     ]
+    # Imports are flagged inconsistently — some as ``sym.imp.<name>`` (they have a
+    # PLT stub), others only as ``reloc.<name>``. We query both spellings for each
+    # dangerous import and merge; the stdin REPL tolerates the misses.
     for sym in wanted:
-        cmds.append((f"xref_{sym}", f"axtj @ sym.imp.{sym}"))
+        cmds.append((f"xref_imp_{sym}", f"axtj @ sym.imp.{sym}"))
+        cmds.append((f"xref_rel_{sym}", f"axtj @ reloc.{sym}"))
     if decompile:
         cmds.append(("decprobe", "pdg @ entry0"))
 
@@ -237,39 +252,59 @@ def deep_analysis(
             "name": f.get("name"),
             "addr": f"0x{f.get('offset'):x}" if isinstance(f.get("offset"), int) else None,
             "size": f.get("size"),
+            # rizin's aflj has no instruction count; expose basic-block count and
+            # size instead (UI shows whichever is available).
             "ninstrs": f.get("ninstrs") or f.get("ninstr") or f.get("nins"),
+            "nbbs": f.get("nbbs"),
             "nargs": f.get("nargs"),
         }
         for f in funcs_json
         if isinstance(f, dict)
     ][:max_functions]
 
-    # Import cross-references: import name -> list of calling sites.
+    # Import cross-references: import name -> list of calling sites. rizin's axtj
+    # only reports the source address and type, so we resolve which function each
+    # call site sits in locally, from the function bounds aflj already gave us.
+    fcn_index = _function_index(funcs_json)
     import_xrefs: list[dict[str, Any]] = []
     caller_addrs: dict[str, int] = {}  # fcn_name -> fcn_addr, for pass-2 disasm
     for sym in wanted:
-        xj = _loadj(raw.get(f"xref_{sym}"))
-        if not isinstance(xj, list) or not xj:
-            continue
-        callers = []
-        for x in xj:
-            if not isinstance(x, dict):
+        merged: list[dict[str, Any]] = []
+        seen_from: set[int] = set()
+        for prefix in ("xref_imp_", "xref_rel_"):
+            xj = _loadj(raw.get(f"{prefix}{sym}"))
+            if not isinstance(xj, list):
                 continue
-            frm = x.get("from")
-            fcn_name = x.get("fcn_name")
-            fcn_addr = x.get("fcn_addr")
-            callers.append(
-                {
-                    "from": f"0x{frm:x}" if isinstance(frm, int) else None,
-                    "fcn_name": fcn_name,
-                    "fcn_addr": f"0x{fcn_addr:x}" if isinstance(fcn_addr, int) else None,
-                    "opcode": x.get("opcode"),
-                }
-            )
-            if fcn_name and isinstance(fcn_addr, int):
-                caller_addrs.setdefault(fcn_name, fcn_addr)
-        if callers:
-            import_xrefs.append({"import": sym, "callers": callers})
+            for x in xj:
+                if not isinstance(x, dict):
+                    continue
+                frm = x.get("from")
+                if isinstance(frm, int) and frm in seen_from:
+                    continue
+                if isinstance(frm, int):
+                    seen_from.add(frm)
+                # Prefer engine-provided fields (r2), else resolve locally (rizin).
+                fcn_name = x.get("fcn_name")
+                fcn_addr = x.get("fcn_addr")
+                if not fcn_name and isinstance(frm, int):
+                    fcn_name, fcn_addr = _resolve_function(fcn_index, frm)
+                # Skip the import's own PLT thunk referencing itself — that's not
+                # a real call site, just the stub the linker emitted.
+                if fcn_name and fcn_name.startswith(("sym.imp.", "reloc.")):
+                    continue
+                merged.append(
+                    {
+                        "from": f"0x{frm:x}" if isinstance(frm, int) else None,
+                        "fcn_name": fcn_name,
+                        "fcn_addr": f"0x{fcn_addr:x}" if isinstance(fcn_addr, int) else None,
+                        "type": x.get("type"),
+                        "opcode": x.get("opcode"),
+                    }
+                )
+                if fcn_name and isinstance(fcn_addr, int):
+                    caller_addrs.setdefault(fcn_name, fcn_addr)
+        if merged:
+            import_xrefs.append({"import": sym, "callers": merged})
 
     # Disassembly we always have: entry0 and main.
     disassembly: dict[str, Any] = {}
@@ -343,6 +378,39 @@ def _dangerous_targets(dangerous_imports: list[str] | None) -> list[str]:
         if len(out) >= 40:
             break
     return out
+
+
+def _function_index(funcs_json: list) -> list[tuple[int, str | None]]:
+    """Sorted (offset, name) function starts for resolving an address.
+
+    We deliberately index by start address and resolve to the nearest preceding
+    function (below), rather than testing rizin's ``minbound``/``maxbound``: those
+    are the min/max of a function's basic blocks and, with shared blocks or
+    switch tables, can span tens of KB and overlap many other functions, which
+    misattributes call sites.
+    """
+    # name coerced to str so tuples remain orderable / bisect-safe.
+    spans = [
+        (f["offset"], f.get("name") or "")
+        for f in funcs_json
+        if isinstance(f, dict) and isinstance(f.get("offset"), int)
+    ]
+    spans.sort()
+    return spans
+
+
+def _resolve_function(index: list[tuple[int, str]], addr: int):
+    """Return (name, offset) of the function ``addr`` belongs to, or (None, None).
+
+    The owning function is the one whose start most closely precedes ``addr``.
+    """
+    import bisect
+
+    i = bisect.bisect_right(index, (addr, "￿")) - 1
+    if i < 0:
+        return None, None
+    off, name = index[i]
+    return name or None, off
 
 
 def _entrypoints(ej: Any) -> list[dict[str, Any]]:
