@@ -216,8 +216,8 @@ def deep_analysis(
     if not available():
         return None
 
-    # Pass 1: analyse, then pull the function list, info, imports and the xrefs
-    # for the dangerous imports we already know about — all in one process.
+    # Pass 1: analyse, then pull the function list, info, imports and entry-point
+    # disassembly — all in one process.
     wanted = _dangerous_targets(dangerous_imports)
     cmds: list[tuple[str, str]] = [
         ("_setup", "e anal.timeout=30; e scr.html=false; aaa"),
@@ -228,12 +228,6 @@ def deep_analysis(
         ("disasm_entry0", "pdfj @ entry0"),
         ("disasm_main", "pdfj @ main"),
     ]
-    # Imports are flagged inconsistently — some as ``sym.imp.<name>`` (they have a
-    # PLT stub), others only as ``reloc.<name>``. We query both spellings for each
-    # dangerous import and merge; the stdin REPL tolerates the misses.
-    for sym in wanted:
-        cmds.append((f"xref_imp_{sym}", f"axtj @ sym.imp.{sym}"))
-        cmds.append((f"xref_rel_{sym}", f"axtj @ reloc.{sym}"))
     if decompile:
         cmds.append(("decprobe", "pdg @ entry0"))
 
@@ -262,17 +256,59 @@ def deep_analysis(
         if isinstance(f, dict)
     ][:max_functions]
 
-    # Import cross-references: import name -> list of calling sites. rizin's axtj
-    # only reports the source address and type, so we resolve which function each
-    # call site sits in locally, from the function bounds aflj already gave us.
+    # Pass 2 — import cross-references. rizin flags imports inconsistently across
+    # formats: ELF uses ``sym.imp.<name>`` or ``reloc.<name>``; PE uses
+    # ``sym.imp.<libname>_<name>``. ``iij`` always carries the import's address
+    # (``plt``), which is the reliable anchor, so we cross-reference each dangerous
+    # import by its address plus the name-based flag spellings and merge. (axtj
+    # only reports source address and type, so the calling function is resolved
+    # locally from the function starts aflj already gave us.)
     fcn_index = _function_index(funcs_json)
+    imports_json = _loadj(raw.get("imports")) or []
+    if not isinstance(imports_json, list):
+        imports_json = []
+
+    xref_targets: dict[str, list[str]] = {}
+    for sym in wanted:
+        targets: list[str] = []
+        for imp in imports_json:
+            if isinstance(imp, dict) and imp.get("name") == sym:
+                plt = imp.get("plt")
+                if isinstance(plt, int) and plt > 0:
+                    targets.append(f"0x{plt:x}")
+                lib = imp.get("libname")
+                if lib:
+                    safe_lib = re.sub(r"[^A-Za-z0-9_.]", "", lib)
+                    targets.append(f"sym.imp.{safe_lib}_{sym}")
+        targets.append(f"sym.imp.{sym}")
+        targets.append(f"reloc.{sym}")
+        deduped = list(dict.fromkeys(targets))
+        if deduped:
+            xref_targets[sym] = deduped
+
+    # Flatten to (opaque marker key, sym, axt target) so marker keys stay simple.
+    flat: list[tuple[str, str, str]] = []
+    for sym, targets in xref_targets.items():
+        for tgt in targets:
+            flat.append((f"x{len(flat)}", sym, tgt))
+
+    raw_x: dict[str, str] = {}
+    if flat:
+        xref_cmds: list[tuple[str, str]] = [("_setup", "e anal.timeout=30; aaa")]
+        xref_cmds += [(key, f"axtj @ {tgt}") for key, _, tgt in flat]
+        raw_x = _batch(path, xref_cmds, timeout) or {}
+
+    keys_by_sym: dict[str, list[str]] = {}
+    for key, sym, _ in flat:
+        keys_by_sym.setdefault(sym, []).append(key)
+
     import_xrefs: list[dict[str, Any]] = []
-    caller_addrs: dict[str, int] = {}  # fcn_name -> fcn_addr, for pass-2 disasm
+    caller_addrs: dict[str, int] = {}  # fcn_name -> fcn_addr, for pass-3 disasm
     for sym in wanted:
         merged: list[dict[str, Any]] = []
         seen_from: set[int] = set()
-        for prefix in ("xref_imp_", "xref_rel_"):
-            xj = _loadj(raw.get(f"{prefix}{sym}"))
+        for key in keys_by_sym.get(sym, []):
+            xj = _loadj(raw_x.get(key))
             if not isinstance(xj, list):
                 continue
             for x in xj:
@@ -283,13 +319,11 @@ def deep_analysis(
                     continue
                 if isinstance(frm, int):
                     seen_from.add(frm)
-                # Prefer engine-provided fields (r2), else resolve locally (rizin).
                 fcn_name = x.get("fcn_name")
                 fcn_addr = x.get("fcn_addr")
                 if not fcn_name and isinstance(frm, int):
                     fcn_name, fcn_addr = _resolve_function(fcn_index, frm)
-                # Skip the import's own PLT thunk referencing itself — that's not
-                # a real call site, just the stub the linker emitted.
+                # Skip the import's own thunk referencing itself — not a call site.
                 if fcn_name and fcn_name.startswith(("sym.imp.", "reloc.")):
                     continue
                 merged.append(
@@ -321,7 +355,7 @@ def deep_analysis(
         decompiler = "rz-ghidra"
         decompilation["entry0"] = dec_probe
 
-    # Pass 2 (optional): disassemble the functions that call dangerous imports,
+    # Pass 3 (optional): disassemble the functions that call dangerous imports,
     # so the analyst sees the actual call sites, not just the entry point.
     extra_targets = list(caller_addrs.items())[:max_disasm_functions]
     if extra_targets:
